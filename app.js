@@ -57,16 +57,46 @@ function renderAuth() {
   <div class="auth"><div class="authcard">
     <h1>Mycopop</h1><p class="sub">Ops &amp; Field CRM</p>
     <label class="f">Email</label><input id="email" class="in" type="email" autocomplete="email">
-    <label class="f">Password</label><input id="pw" class="in" type="password" autocomplete="current-password">
+    <label class="f">Password</label>
+    <div style="position:relative">
+      <input id="pw" class="in" type="password" autocomplete="current-password" style="width:100%;padding-right:62px">
+      <button id="pwtoggle" type="button" aria-label="Show password"
+        style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.03em;color:#7a7a7a;padding:6px 8px">SHOW</button>
+    </div>
     <button id="login" class="btn pri" style="width:100%;justify-content:center;margin-top:16px">Sign in</button>
     <button id="signup" class="btn" style="width:100%;justify-content:center;margin-top:8px">Create account</button>
     <p class="sub" style="margin-top:14px;text-align:center">New accounts have no access until an admin assigns a role.</p>
   </div></div>`;
-  $("#login").onclick = () => safe(() => signInWithEmailAndPassword(auth, $("#email").value.trim(), $("#pw").value));
-  $("#signup").onclick = () => safe(async () => {
-    await createUserWithEmailAndPassword(auth, $("#email").value.trim(), $("#pw").value);
-    toast("Account created. Ask an admin to grant access.");
-  });
+  const pw = $("#pw"), tgl = $("#pwtoggle");
+  tgl.onclick = () => {
+    const reveal = pw.type === "password";
+    pw.type = reveal ? "text" : "password";
+    tgl.textContent = reveal ? "HIDE" : "SHOW";
+    pw.focus();
+  };
+  const authError = (e) => {
+    const code = (e && e.code || "").replace("auth/", "");
+    if (["invalid-credential", "wrong-password", "user-not-found", "invalid-email"].includes(code))
+      return "Wrong email or password.";
+    if (code === "unauthorized-domain") return "This site's domain isn't authorized in Firebase Auth.";
+    if (code === "too-many-requests") return "Too many attempts — wait a minute and try again.";
+    if (code === "network-request-failed") return "Network error — check your connection.";
+    return (e && e.message) || "Sign-in failed.";
+  };
+  const submit = async () => {
+    try {
+      await signInWithEmailAndPassword(auth, $("#email").value.trim(), pw.value);
+    } catch (e) { console.error(e); toast(authError(e), true); }
+  };
+  $("#login").onclick = submit;
+  pw.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  $("#email").addEventListener("keydown", (e) => { if (e.key === "Enter") pw.focus(); });
+  $("#signup").onclick = async () => {
+    try {
+      await createUserWithEmailAndPassword(auth, $("#email").value.trim(), pw.value);
+      toast("Account created. Ask an admin to grant access.");
+    } catch (e) { console.error(e); toast(authError(e), true); }
+  };
 }
 
 function renderPending() {
