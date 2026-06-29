@@ -139,7 +139,7 @@ function renderPending() {
 // ============================================================
 const ADMIN_NAV = [
   ["overview", "Overview"], ["batches", "Batches &amp; pricing"], ["inventory", "Inventory &amp; nodes"],
-  ["ambassadors", "Ambassadors"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["settings", "Settings &amp; rules"],
+  ["ambassadors", "Ambassadors"], ["direct", "Direct sale"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["settings", "Settings &amp; rules"],
 ];
 const AMB_NAV = [
   ["amb-dash", "My dashboard"], ["amb-order", "Place order"], ["amb-buy", "Buy &amp; convert"], ["amb-wallet", "Wallet"],
@@ -188,7 +188,7 @@ async function route() {
   v.innerHTML = `<p class="sub">Loading…</p>`;
   const map = {
     overview: adminOverview, batches: adminBatches, inventory: adminInventory,
-    ambassadors: adminAmbassadors, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
+    ambassadors: adminAmbassadors, direct: adminDirectSale, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
     "amb-dash": ambDash, "amb-order": ambOrder, "amb-buy": ambBuy, "amb-wallet": ambWallet,
   };
   try {
@@ -334,7 +334,7 @@ async function adminAmbassadors(v) {
     <div class="card"><div class="ch"><h3>Roster</h3></div>
       <table><thead><tr><th>Name</th><th>Tier</th><th>Node</th><th>Available credit</th><th>Lifetime earned</th></tr></thead><tbody>
         ${ambs.map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span><span class="nm">${a.name||"—"}</span>${a.title ? ` <span class="pill" style="background:var(--ink,#241B22);color:#fff">${a.title}</span>` : ""}<div class="sub">${a.email||""}</div></td>
-          <td>${a.tier === 2 ? '<span class="pill t20">Founders · 20%</span>' : '<span class="pill t15">15%</span>'}</td>
+          <td>${a.commissionRate === 0 ? '<span class="pill">House · 0%</span>' : a.tier === 2 ? '<span class="pill t20">Founders · 20%</span>' : '<span class="pill t15">15%</span>'}</td>
           <td>${nodes.find(n => n.id === a.nodeId)?.name || a.nodeId || "—"}</td>
           <td class="mono" style="color:var(--myc-d)">${money(a.walletAvailable)}</td>
           <td class="mono">${money(a.walletEarnedLifetime)}</td></tr>`).join("") || `<tr><td colspan="5" class="sub">No ambassadors yet.</td></tr>`}
@@ -367,6 +367,45 @@ function openAmbEditor(nodes) {
     }, { merge: true });
     await call("setUserRole")({ uid, role: "ambassador" });
     toast("Ambassador added"); S.page = "ambassadors"; route();
+  });
+}
+
+async function adminDirectSale(v) {
+  const [batches, lots, nodes, custs] = await Promise.all([
+    allDocs("batches"), allDocs("stockLots"), allDocs("nodes"),
+    getDocs(query(collection(db, "customers"), where("ambassadorId", "==", "house"))).then(s => s.docs.map(d => ({ id: d.id, ...d.data() }))),
+  ]);
+  const avail = (node, batch) => lots.filter(l => l.nodeId === node && l.batchId === batch && l.ownership === "consignment").reduce((s, l) => s + l.quantity, 0);
+  v.innerHTML = `<div class="pagehead"><div><h1>Direct sale <span class="pill" style="vertical-align:middle">House · 0%</span></h1>
+      <p>Fungus Ranch sells directly — full margin, no field commission. Draws from the node's consignment stock you choose.</p></div></div>
+    <div class="card pad" style="max-width:540px">
+      <label class="f">Sell from node</label><select id="node" class="in">${nodes.map(n => `<option value="${n.id}">${n.name}</option>`).join("")}</select>
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b => `<option value="${b.id}" data-ws="${b.wholesalePrice}" data-cost="${b.costPerCan}">${b.code} · ${money(b.wholesalePrice)}/can</option>`).join("")}</select>
+      <div class="sub" id="avail" style="margin:4px 0 8px"></div>
+      <label class="f">Customer (optional)</label><input id="cust" class="in" placeholder="e.g. Whole Foods SE" list="cl"><datalist id="cl">${custs.map(c => `<option value="${c.name}">`).join("")}</datalist>
+      <label class="f">Cans</label><input id="cans" class="in mono" type="number" value="24">
+      <div style="display:flex;justify-content:space-between;padding:14px 0;border-top:1px solid var(--line);margin-top:14px"><span>Order value</span><b class="mono" id="val">—</b></div>
+      <div style="display:flex;justify-content:space-between;padding-bottom:4px"><span>Commission</span><b class="mono">$0.00 · House</b></div>
+      <div style="display:flex;justify-content:space-between;padding-bottom:12px"><span style="color:var(--myc-d)">Margin (rev − cost)</span><b class="mono" id="marg" style="color:var(--myc-d)">—</b></div>
+      <button id="submit" class="btn pri" style="width:100%;justify-content:center">Record direct sale</button>
+    </div>`;
+  const sel = () => $("#batch").selectedOptions[0];
+  const recalc = () => {
+    const ws = parseFloat(sel()?.dataset.ws) || 0, cost = parseFloat(sel()?.dataset.cost) || 0;
+    const cans = parseInt($("#cans").value) || 0, node = $("#node").value, batch = $("#batch").value;
+    $("#val").textContent = money(ws * cans);
+    $("#marg").textContent = money((ws - cost) * cans);
+    $("#avail").textContent = `${num(avail(node, batch))} cans available in ${nodes.find(n => n.id === node)?.name || node}`;
+  };
+  ["#node", "#batch"].forEach(s => $(s).onchange = recalc); $("#cans").oninput = recalc; recalc();
+  $("#submit").onclick = () => safe(async () => {
+    let customerId = null; const name = $("#cust").value.trim();
+    if (name) {
+      const ex = custs.find(c => c.name.toLowerCase() === name.toLowerCase());
+      customerId = ex ? ex.id : (await addDoc(collection(db, "customers"), { name, type: "account", ambassadorId: "house" })).id;
+    }
+    const r = await call("createConsignmentSale")({ batchId: $("#batch").value, cans: parseInt($("#cans").value), customerId, ambassadorId: "house", sourceNodeId: $("#node").value });
+    toast(`Direct sale recorded — ${money(r.data.total)}`); S.page = "orders"; route();
   });
 }
 
