@@ -254,47 +254,52 @@ async function adminBatches(v) {
 }
 
 function batchCard(b, spread) {
-  const cost = b.costPerCan || 0, ws = b.wholesalePrice || 0, credit = b.creditPrice ?? Math.max(0, ws - spread);
+  const cost = b.costPerCan || 0, ws = b.wholesalePrice || 0;
+  const owned = b.ownedPrice ?? ws;
+  const credit = b.creditPrice ?? Math.max(0, owned - spread);
   const comm = ws * 0.175;
-  return `<div class="card"><div class="ch"><div><h3>${b.code} · ${b.code ? "Mycopop" : ""} SS</h3>
+  return `<div class="card"><div class="ch"><div><h3>${b.code}</h3>
       <span class="sub">${num(b.cansProduced)} cans · best-by ${b.bestBy || "—"}</span></div>
       <button class="btn sm" data-edit="${b.id}">Edit</button></div>
     <div class="pad" style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">
       <div><div class="lock">Cost/can</div><div class="mono" style="font-size:18px;font-weight:600">${money(cost)}</div></div>
-      <div><div class="lock">Wholesale</div><div class="mono" style="font-size:18px;font-weight:600">${money(ws)}</div></div>
+      <div><div class="lock">Consignment</div><div class="mono" style="font-size:18px;font-weight:600">${money(ws)}</div></div>
+      <div><div class="lock">Buy-to-own</div><div class="mono" style="font-size:18px;font-weight:600">${money(owned)}</div></div>
       <div><div class="lock">Credit <span class="auto">↺ auto</span></div><div class="mono" style="font-size:18px;font-weight:600;color:var(--saffron-d)">${money(credit)}</div></div>
-      <div><div class="lock">Cash buy = WS</div><div class="mono" style="font-size:18px;font-weight:600">${money(ws)}</div></div>
     </div>
     <div class="pad" style="border-top:1px solid var(--line);font-size:12px;color:var(--ink-2)">
-      Your net/can — consignment ${money(ws - cost - comm)} · cash buy ${money(ws - cost)} · credit buy ${money(credit - cost)}</div></div>`;
+      Your net/can — consignment ${money(ws - cost - comm)} · buy-to-own ${money(owned - cost)} · credit buy ${money(credit - cost)}</div></div>`;
 }
 
 function openBatchEditor(b, spread) {
   const v = $("#view");
-  const d = b || { code: "", costPerCan: 1.83, wholesalePrice: 3.5, cansProduced: 0, bbl: 30, bestBy: "", cannedDate: "", productId: "mycopop-ss" };
+  const d = b || { code: "", costPerCan: 1.83, wholesalePrice: 4, ownedPrice: 3.5, cansProduced: 0, bbl: null, bestBy: "", cannedDate: "", productId: "mycopop-hgl" };
+  const ownedVal = (d.ownedPrice ?? d.wholesalePrice);
   v.innerHTML = `<div class="pagehead"><div><h1>${b ? "Edit batch" : "New batch"}</h1>
-      <p>Change wholesale and watch credit follow.</p></div>
+      <p>Consignment is the sell price; buy-to-own is the stock-it price. Credit = buy-to-own − $${spread.toFixed(2)}.</p></div>
       <button id="back" class="btn">← Back</button></div>
     <div class="card pad" style="max-width:560px">
       <label class="f">Batch code</label><input id="code" class="in" value="${d.code}">
       <div class="grid g2"><div><label class="f">Cost / can</label><input id="cost" class="in mono" type="number" step="0.01" value="${d.costPerCan}"></div>
-        <div><label class="f">Wholesale / can</label><input id="ws" class="in mono" type="number" step="0.01" value="${d.wholesalePrice}"></div></div>
-      <div class="grid g2" style="margin-top:4px"><div><label class="f">Credit price <span class="auto">auto = WS − $${spread.toFixed(2)}</span></label><input id="credit" class="in mono" readonly value="${(d.wholesalePrice - spread).toFixed(2)}"></div>
-        <div><label class="f">Cans produced</label><input id="cans" class="in mono" type="number" value="${d.cansProduced}"></div></div>
-      <div class="grid g2" style="margin-top:4px"><div><label class="f">Canned date</label><input id="canned" class="in" type="date" value="${d.cannedDate||""}"></div>
-        <div><label class="f">Best-by</label><input id="bestby" class="in" type="date" value="${d.bestBy||""}"></div></div>
+        <div><label class="f">Consignment / can</label><input id="ws" class="in mono" type="number" step="0.01" value="${d.wholesalePrice}"></div></div>
+      <div class="grid g2" style="margin-top:4px"><div><label class="f">Buy-to-own / can</label><input id="owned" class="in mono" type="number" step="0.01" value="${ownedVal}"></div>
+        <div><label class="f">Credit price <span class="auto">auto = buy-to-own − $${spread.toFixed(2)}</span></label><input id="credit" class="in mono" readonly value="${Math.max(0, ownedVal - spread).toFixed(2)}"></div></div>
+      <div class="grid g2" style="margin-top:4px"><div><label class="f">Cans produced</label><input id="cans" class="in mono" type="number" value="${d.cansProduced}"></div>
+        <div><label class="f">Canned date</label><input id="canned" class="in" type="date" value="${d.cannedDate||""}"></div></div>
+      <div class="grid g2" style="margin-top:4px"><div><label class="f">Best-by</label><input id="bestby" class="in" type="date" value="${d.bestBy||""}"></div><div></div></div>
       <button id="save" class="btn pri" style="margin-top:18px;width:100%;justify-content:center">${b ? "Save changes" : "Create batch"}</button>
     </div>`;
   $("#back").onclick = route;
-  $("#ws").oninput = () => $("#credit").value = Math.max(0, (parseFloat($("#ws").value) || 0) - spread).toFixed(2);
+  $("#owned").oninput = () => $("#credit").value = Math.max(0, (parseFloat($("#owned").value) || 0) - spread).toFixed(2);
   $("#save").onclick = () => safe(async () => {
     await call("saveBatch")({ batchId: b?.id || $("#code").value.trim(), data: {
       productId: d.productId, code: $("#code").value.trim(),
       costPerCan: parseFloat($("#cost").value), wholesalePrice: parseFloat($("#ws").value),
+      ownedPrice: parseFloat($("#owned").value),
       cansProduced: parseInt($("#cans").value) || 0, bbl: d.bbl,
       cannedDate: $("#canned").value, bestBy: $("#bestby").value, status: "active",
     }});
-    toast("Batch saved — credit price re-derived"); S.page = "batches"; route();
+    toast("Batch saved — pricing updated"); S.page = "batches"; route();
   });
 }
 
