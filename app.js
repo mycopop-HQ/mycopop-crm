@@ -33,7 +33,9 @@ async function safe(fn) {
 }
 
 // ---------- state ----------
-const S = { user: null, role: null, amb: null, config: null, page: null };
+const S = { user: null, role: null, amb: null, config: null, page: null, viewAs: null };
+// identity the ambassador screens act on — the logged-in user, or (admin preview) the viewed ambassador
+const actorUid = () => S.viewAs?.uid || S.user.uid;
 
 // ============================================================
 // AUTH GATE
@@ -139,32 +141,38 @@ function renderPending() {
 // ============================================================
 const ADMIN_NAV = [
   ["overview", "Overview"], ["batches", "Batches &amp; pricing"], ["inventory", "Inventory &amp; nodes"],
-  ["ambassadors", "Ambassadors"], ["direct", "Direct sale"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["settings", "Settings &amp; rules"],
+  ["ambassadors", "Ambassadors"], ["direct", "Direct sale"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["viewas", "View as…"], ["settings", "Settings &amp; rules"],
 ];
 const AMB_NAV = [
   ["amb-dash", "My dashboard"], ["amb-order", "Place order"], ["amb-buy", "Buy &amp; convert"], ["amb-wallet", "Wallet"],
 ];
 
 function renderApp() {
-  const nav = S.role === "admin" ? ADMIN_NAV : AMB_NAV;
-  const name = S.role === "admin" ? (S.user.email || "Admin") : (S.amb?.name || S.user.email);
-  const sub = S.role === "admin" ? "Founder · full access"
-    : `${S.amb?.title ? S.amb.title : (S.amb?.tier === 2 ? "Founders Tier" : "Tier 1")} · ${S.amb?.tier === 2 ? "20%" : "15%"}`;
+  const preview = !!S.viewAs;
+  const role = preview ? "ambassador" : S.role;   // admin previewing renders the ambassador view
+  const who = preview ? S.viewAs : S.amb;
+  const nav = role === "admin" ? ADMIN_NAV : AMB_NAV;
+  const name = role === "admin" ? (S.user.email || "Admin") : (who?.name || S.user.email);
+  const sub = role === "admin" ? "Founder · full access"
+    : `${who?.title ? who.title : (who?.tier === 2 ? "Founders Tier" : "Tier 1")} · ${who?.tier === 2 ? "20%" : "15%"}`;
   root.innerHTML = `
   <div class="app">
     <aside class="side">
       <div class="brand">
         <svg class="logo" viewBox="0 0 40 40" fill="none"><path d="M20 5C12 5 6 11 6 18c0 2 1 3 3 3h22c2 0 3-1 3-3 0-7-6-13-14-13z" fill="#E0922B"/><circle cx="14" cy="15" r="2" fill="#FBF4F0"/><circle cx="24" cy="13" r="2.4" fill="#FBF4F0"/><path d="M16 21h8l-1 11c0 2-2 3-3 3s-3-1-3-3l-1-11z" fill="#D6435A"/></svg>
-        <div><b>Mycopop</b><small>${S.role === "admin" ? "Command" : "My field"}</small></div>
+        <div><b>Mycopop</b><small>${role === "admin" ? "Command" : "My field"}</small></div>
       </div>
       <nav class="nav" id="nav">
         ${nav.map(([k, label]) => `<button data-page="${k}" class="${k === S.page ? "active" : ""}">${label}</button>`).join("")}
       </nav>
-      <div class="foot">v1 · ${S.user.email}<br><button id="signout">Sign out</button></div>
+      <div class="foot">v1 · ${S.user.email}<br>${preview ? `<button id="exitview">← Exit preview</button>` : `<button id="signout">Sign out</button>`}</div>
     </aside>
     <div class="main">
+      ${preview ? `<div style="background:#241B22;color:#fff;padding:9px 18px;font-size:13px;display:flex;justify-content:space-between;align-items:center">
+        <span>👁 Viewing as <b>${S.viewAs.name}</b> — read-only preview</span>
+        <button id="exitview2" class="btn sm" style="background:#fff;color:#241B22">Exit to admin</button></div>` : ""}
       <div class="top">
-        <div class="crumb"><b>${S.role === "admin" ? "Admin" : "Ambassador"}</b> · <span id="crumb"></span></div>
+        <div class="crumb"><b>${role === "admin" ? "Admin" : "Ambassador"}</b> · <span id="crumb"></span></div>
         <div class="spacer"></div>
         <div class="who"><div class="ava">${initials(name)}</div><div><b>${name}</b><small>${sub}</small></div></div>
       </div>
@@ -177,7 +185,10 @@ function renderApp() {
     $("#nav").querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b));
     route();
   };
-  $("#signout").onclick = () => signOut(auth);
+  const exitPreview = () => { S.viewAs = null; S.page = "viewas"; renderApp(); };
+  if ($("#signout")) $("#signout").onclick = () => signOut(auth);
+  if ($("#exitview")) $("#exitview").onclick = exitPreview;
+  if ($("#exitview2")) $("#exitview2").onclick = exitPreview;
   route();
 }
 
@@ -188,7 +199,7 @@ async function route() {
   v.innerHTML = `<p class="sub">Loading…</p>`;
   const map = {
     overview: adminOverview, batches: adminBatches, inventory: adminInventory,
-    ambassadors: adminAmbassadors, direct: adminDirectSale, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
+    ambassadors: adminAmbassadors, direct: adminDirectSale, viewas: adminViewAs, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
     "amb-dash": ambDash, "amb-order": ambOrder, "amb-buy": ambBuy, "amb-wallet": ambWallet,
   };
   try {
@@ -370,6 +381,22 @@ function openAmbEditor(nodes) {
   });
 }
 
+async function adminViewAs(v) {
+  const ambs = (await allDocs("ambassadors")).filter(a => a.id !== "house");
+  v.innerHTML = `<div class="pagehead"><div><h1>View as ambassador</h1><p>Open any ambassador's dashboard exactly as they see it — read-only.</p></div></div>
+    <div class="card"><div class="ch"><h3>Choose an ambassador</h3></div>
+      <table><thead><tr><th>Name</th><th>Tier</th><th>Node</th><th></th></tr></thead><tbody>
+        ${ambs.map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span>${a.name || "—"}${a.title ? ` <span class="pill" style="background:var(--ink,#241B22);color:#fff">${a.title}</span>` : ""}</td>
+          <td>${a.tier === 2 ? '<span class="pill t20">20%</span>' : '<span class="pill t15">15%</span>'}</td>
+          <td>${a.nodeId || "—"}</td>
+          <td><button class="btn sm" data-view="${a.id}">Preview →</button></td></tr>`).join("") || `<tr><td colspan="4" class="sub">No ambassadors yet.</td></tr>`}
+      </tbody></table></div>`;
+  v.querySelectorAll("[data-view]").forEach(btn => btn.onclick = () => {
+    S.viewAs = ambs.find(a => a.id === btn.dataset.view);
+    S.page = "amb-dash"; renderApp();
+  });
+}
+
 async function adminDirectSale(v) {
   const [batches, lots, nodes, custs] = await Promise.all([
     allDocs("batches"), allDocs("stockLots"), allDocs("nodes"),
@@ -471,17 +498,17 @@ async function adminSettings(v) {
 // ============================================================
 // AMBASSADOR SCREENS
 // ============================================================
-async function loadAmb() { S.amb = (await getDoc(doc(db, "ambassadors", S.user.uid))).data() || {}; }
+async function loadAmb() { S.amb = (await getDoc(doc(db, "ambassadors", actorUid()))).data() || {}; }
 async function myLots() {
   return (await allDocs("stockLots")).filter(l =>
     (l.ownership === "consignment" && l.nodeId === S.amb.nodeId) ||
-    (l.ownership === "owned" && l.ownerAmbassadorId === S.user.uid));
+    (l.ownership === "owned" && l.ownerAmbassadorId === actorUid()));
 }
 
 async function ambDash(v) {
   await loadAmb();
   const [orders, lots] = await Promise.all([
-    getDocs(query(collection(db, "orders"), where("ambassadorId", "==", S.user.uid))).then(s => s.docs.map(d => d.data())),
+    getDocs(query(collection(db, "orders"), where("ambassadorId", "==", actorUid()))).then(s => s.docs.map(d => d.data())),
     myLots(),
   ]);
   const sales = orders.filter(o => o.type === "consignment_sale");
@@ -527,12 +554,13 @@ async function ambOrder(v) {
   };
   $("#batch").onchange = recalc; $("#cans").oninput = recalc; recalc();
   $("#submit").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to transact", true);
     let customerId = null;
     const name = $("#cust").value.trim();
     if (name) {
       const existing = customers.find(c => c.name.toLowerCase() === name.toLowerCase());
       if (existing) customerId = existing.id;
-      else customerId = (await addDoc(collection(db, "customers"), { name, type: "account", ambassadorId: S.user.uid })).id;
+      else customerId = (await addDoc(collection(db, "customers"), { name, type: "account", ambassadorId: actorUid() })).id;
     }
     const r = await call("createConsignmentSale")({ batchId: $("#batch").value, cans: parseInt($("#cans").value), customerId });
     toast(`Sold — you earned ${money(r.data.commission)}`); route();
@@ -569,12 +597,14 @@ async function ambBuy(v) {
   };
   $("#batch").onchange = recalc; $("#cans").oninput = recalc; recalc();
   const buy = (method) => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to transact", true);
     await call("buyToOwn")({ batchId: $("#batch").value, cans: parseInt($("#cans").value), paymentMethod: method });
     toast(`Bought with ${method}`); route();
   });
   $("#buyCredit").onclick = () => buy("credit");
   $("#buyCash").onclick = () => buy("cash");
   $("#convert").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to transact", true);
     await call("convertConsignmentToOwned")({ batchId: $("#batch").value, cans: parseInt($("#convCans").value) });
     toast("Converted to owned"); route();
   });
@@ -582,7 +612,7 @@ async function ambBuy(v) {
 
 async function ambWallet(v) {
   await loadAmb();
-  const entries = await getDocs(query(collection(db, "walletEntries"), where("ambassadorId", "==", S.user.uid)))
+  const entries = await getDocs(query(collection(db, "walletEntries"), where("ambassadorId", "==", actorUid())))
     .then(s => s.docs.map(d => d.data()));
   const a = S.amb;
   v.innerHTML = `<div class="pagehead"><div><h1>Wallet</h1><p>Spend earned commission on discounted stock, or cash it out.</p></div></div>
@@ -603,6 +633,7 @@ async function ambWallet(v) {
       </tbody></table></div>
     </div>`;
   $("#cashout").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to transact", true);
     await call("requestCashout")({ amount: parseFloat($("#amt").value) });
     toast("Cash-out requested — pending admin approval");
   });
