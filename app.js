@@ -1,7 +1,8 @@
 // Mycopop CRM — application logic (wired to Firebase Auth, Firestore, Functions)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, getIdTokenResult }
+  createUserWithEmailAndPassword, signOut, getIdTokenResult,
+  sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { getFirestore, doc, getDoc, setDoc, collection, getDocs,
   addDoc, query, where, orderBy, limit, serverTimestamp }
@@ -30,6 +31,15 @@ function toast(msg, isErr = false) {
 async function safe(fn) {
   try { return await fn(); }
   catch (e) { console.error(e); toast(e.message || "Something went wrong", true); throw e; }
+}
+function friendlyAuthError(e) {
+  const code = (e && e.code || "").replace("auth/", "");
+  if (["invalid-credential", "wrong-password", "user-not-found", "invalid-email"].includes(code)) return "Wrong email or password.";
+  if (code === "weak-password") return "Password must be at least 6 characters.";
+  if (code === "requires-recent-login") return "Please sign out and back in, then try again.";
+  if (code === "too-many-requests") return "Too many attempts — wait a minute and try again.";
+  if (code === "network-request-failed") return "Network error — check your connection.";
+  return (e && e.message) || "Something went wrong.";
 }
 
 // ---------- state ----------
@@ -84,6 +94,7 @@ function renderAuth() {
       <button id="pwtoggle" type="button" aria-label="Show password"
         style="position:absolute;right:6px;top:50%;transform:translateY(-50%);background:none;border:0;cursor:pointer;font-size:12px;font-weight:600;letter-spacing:.03em;color:#7a7a7a;padding:6px 8px">SHOW</button>
     </div>
+    <div style="text-align:right;margin-top:6px"><button id="forgot" type="button" style="background:none;border:0;color:#7a7a7a;font-size:12px;cursor:pointer;text-decoration:underline">Forgot password?</button></div>
     <button id="login" class="btn pri" style="width:100%;justify-content:center;margin-top:16px">Sign in</button>
     <button id="signup" class="btn" style="width:100%;justify-content:center;margin-top:8px">Create account</button>
     <p id="autherr" style="color:#c0392b;font-size:13px;min-height:1.1em;margin-top:12px;text-align:center"></p>
@@ -114,6 +125,14 @@ function renderAuth() {
     } catch (e) { console.error(e); err().style.color = "#c0392b"; err().textContent = authError(e); }
   };
   $("#login").onclick = submit;
+  $("#forgot").onclick = async () => {
+    const email = $("#email").value.trim();
+    if (!email) { err().style.color = "#c0392b"; err().textContent = "Enter your email above, then tap Forgot password."; return; }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      err().style.color = "#2a7"; err().textContent = `Reset email sent to ${email} — check inbox/spam.`;
+    } catch (e) { console.error(e); err().style.color = "#c0392b"; err().textContent = authError(e); }
+  };
   pw.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
   $("#email").addEventListener("keydown", (e) => { if (e.key === "Enter") pw.focus(); });
   $("#signup").onclick = async () => {
@@ -165,7 +184,7 @@ function renderApp() {
       <nav class="nav" id="nav">
         ${nav.map(([k, label]) => `<button data-page="${k}" class="${k === S.page ? "active" : ""}">${label}</button>`).join("")}
       </nav>
-      <div class="foot">v1 · ${S.user.email}<br>${preview ? `<button id="exitview">← Exit preview</button>` : `<button id="signout">Sign out</button>`}</div>
+      <div class="foot">v1 · ${S.user.email}<br>${preview ? `<button id="exitview">← Exit preview</button>` : `<button id="changepw" style="background:none;border:0;color:inherit;cursor:pointer;text-decoration:underline;font:inherit;padding:0">Change password</button> · <button id="signout">Sign out</button>`}</div>
     </aside>
     <div class="main">
       ${preview ? `<div style="background:#241B22;color:#fff;padding:9px 18px;font-size:13px;display:flex;justify-content:space-between;align-items:center">
@@ -187,9 +206,36 @@ function renderApp() {
   };
   const exitPreview = () => { S.viewAs = null; S.page = "viewas"; renderApp(); };
   if ($("#signout")) $("#signout").onclick = () => signOut(auth);
+  if ($("#changepw")) $("#changepw").onclick = changePasswordForm;
   if ($("#exitview")) $("#exitview").onclick = exitPreview;
   if ($("#exitview2")) $("#exitview2").onclick = exitPreview;
   route();
+}
+
+function changePasswordForm() {
+  const v = $("#view");
+  v.innerHTML = `<div class="pagehead"><div><h1>Change password</h1><p>Update your own login password.</p></div>
+    <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:440px">
+      <label class="f">Current password</label><input id="cur" class="in" type="password" autocomplete="current-password">
+      <label class="f">New password (min 6)</label><input id="np1" class="in" type="password" autocomplete="new-password">
+      <label class="f">Confirm new password</label><input id="np2" class="in" type="password" autocomplete="new-password">
+      <p id="cperr" style="font-size:13px;min-height:1.1em;margin-top:10px"></p>
+      <button id="cpsave" class="btn pri" style="width:100%;justify-content:center">Update password</button>
+    </div>`;
+  $("#back").onclick = route;
+  $("#cpsave").onclick = async () => {
+    const e = $("#cperr"); e.style.color = "#c0392b";
+    const cur = $("#cur").value, n1 = $("#np1").value, n2 = $("#np2").value;
+    if (n1.length < 6) { e.textContent = "New password must be at least 6 characters."; return; }
+    if (n1 !== n2) { e.textContent = "New passwords don't match."; return; }
+    try {
+      await reauthenticateWithCredential(S.user, EmailAuthProvider.credential(S.user.email, cur));
+      await updatePassword(S.user, n1);
+      e.style.color = "#2a7"; e.textContent = "Password updated.";
+      $("#cur").value = $("#np1").value = $("#np2").value = "";
+    } catch (err) { console.error(err); e.style.color = "#c0392b"; e.textContent = friendlyAuthError(err); }
+  };
 }
 
 async function route() {
