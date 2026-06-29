@@ -149,7 +149,7 @@ function renderApp() {
   const nav = S.role === "admin" ? ADMIN_NAV : AMB_NAV;
   const name = S.role === "admin" ? (S.user.email || "Admin") : (S.amb?.name || S.user.email);
   const sub = S.role === "admin" ? "Founder · full access"
-    : `Ambassador · Tier ${S.amb?.tier === 2 ? "20%" : "15%"}`;
+    : `${S.amb?.title ? S.amb.title : (S.amb?.tier === 2 ? "Founders Tier" : "Tier 1")} · ${S.amb?.tier === 2 ? "20%" : "15%"}`;
   root.innerHTML = `
   <div class="app">
     <aside class="side">
@@ -328,8 +328,8 @@ async function adminAmbassadors(v) {
       <button id="add" class="btn pri">+ Add ambassador</button></div>
     <div class="card"><div class="ch"><h3>Roster</h3></div>
       <table><thead><tr><th>Name</th><th>Tier</th><th>Node</th><th>Available credit</th><th>Lifetime earned</th></tr></thead><tbody>
-        ${ambs.map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span><span class="nm">${a.name||"—"}</span><div class="sub">${a.email||""}</div></td>
-          <td>${a.tier === 2 ? '<span class="pill t20">20%</span>' : '<span class="pill t15">15%</span>'}</td>
+        ${ambs.map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span><span class="nm">${a.name||"—"}</span>${a.title ? ` <span class="pill" style="background:var(--ink,#241B22);color:#fff">${a.title}</span>` : ""}<div class="sub">${a.email||""}</div></td>
+          <td>${a.tier === 2 ? '<span class="pill t20">Founders · 20%</span>' : '<span class="pill t15">15%</span>'}</td>
           <td>${nodes.find(n => n.id === a.nodeId)?.name || a.nodeId || "—"}</td>
           <td class="mono" style="color:var(--myc-d)">${money(a.walletAvailable)}</td>
           <td class="mono">${money(a.walletEarnedLifetime)}</td></tr>`).join("") || `<tr><td colspan="5" class="sub">No ambassadors yet.</td></tr>`}
@@ -346,7 +346,7 @@ function openAmbEditor(nodes) {
       <label class="f">User ID (uid)</label><input id="uid" class="in mono">
       <label class="f">Name</label><input id="name" class="in">
       <label class="f">Email</label><input id="email" class="in" type="email">
-      <div class="grid g2"><div><label class="f">Tier</label><select id="tier" class="in"><option value="1">Tier 1 · 15%</option><option value="2">Tier 2 · 20%</option></select></div>
+      <div class="grid g2"><div><label class="f">Tier</label><select id="tier" class="in"><option value="1">Tier 1 · 15%</option><option value="2">Founders Tier · 20%</option></select></div>
         <div><label class="f">Node</label><select id="node" class="in">${nodes.map(n => `<option value="${n.id}">${n.name}</option>`).join("")}</select></div></div>
       <button id="save" class="btn pri" style="margin-top:18px;width:100%;justify-content:center">Create &amp; grant access</button>
     </div>`;
