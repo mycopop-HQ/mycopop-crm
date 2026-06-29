@@ -535,7 +535,7 @@ async function ambDash(v) {
 async function ambOrder(v) {
   await loadAmb();
   const [batches, customers] = await Promise.all([allDocs("batches"), 
-    getDocs(query(collection(db, "customers"), where("ambassadorId", "==", S.user.uid))).then(s => s.docs.map(d => ({id:d.id,...d.data()})))]);
+    getDocs(query(collection(db, "customers"), where("ambassadorId", "==", actorUid()))).then(s => s.docs.map(d => ({id:d.id,...d.data()})))]);
   const rate = S.amb.tier === 2 ? (S.config?.tier2Rate ?? .2) : (S.config?.tier1Rate ?? .15);
   v.innerHTML = `<div class="pagehead"><div><h1>Place order</h1><p>Sell consignment stock and earn ${(rate*100).toFixed(0)}% commission.</p></div></div>
     <div class="card pad" style="max-width:520px">
