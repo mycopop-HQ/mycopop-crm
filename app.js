@@ -39,18 +39,37 @@ const S = { user: null, role: null, amb: null, config: null, page: null };
 // AUTH GATE
 // ============================================================
 onAuthStateChanged(auth, async (user) => {
-  S.user = user;
-  if (!user) return renderAuth();
-  const token = await getIdTokenResult(user, true);
-  S.role = token.claims.role || null;
-  if (!S.role) return renderPending();
-  S.config = (await getDoc(doc(db, "config/settings"))).data() || null;
-  if (S.role === "ambassador") {
-    S.amb = (await getDoc(doc(db, "ambassadors", user.uid))).data() || null;
+  try {
+    S.user = user;
+    if (!user) return renderAuth();
+    const token = await getIdTokenResult(user, true);
+    S.role = token.claims.role || null;
+    if (!S.role) return renderPending();
+    S.config = (await getDoc(doc(db, "config/settings"))).data() || null;
+    if (S.role === "ambassador") {
+      S.amb = (await getDoc(doc(db, "ambassadors", user.uid))).data() || null;
+    }
+    S.page = S.role === "admin" ? "overview" : "amb-dash";
+    renderApp();
+  } catch (e) {
+    console.error("Post-login load failed:", e);
+    renderFatal(e);
   }
-  S.page = S.role === "admin" ? "overview" : "amb-dash";
-  renderApp();
 });
+
+function renderFatal(e) {
+  const msg = (e && (e.message || e.code)) || String(e);
+  root.innerHTML = `
+  <div class="auth"><div class="authcard">
+    <h1>Couldn't load</h1>
+    <p class="sub" style="margin:10px 0 14px">You're signed in, but the app hit an error while loading your data:</p>
+    <pre style="white-space:pre-wrap;font-size:12px;color:#b00;background:#fff5f5;padding:10px;border-radius:8px">${msg}</pre>
+    <button id="retry" class="btn pri" style="width:100%;justify-content:center;margin-top:14px">Retry</button>
+    <button id="out" class="btn" style="width:100%;justify-content:center;margin-top:8px">Sign out</button>
+  </div></div>`;
+  $("#retry").onclick = () => location.reload();
+  $("#out").onclick = () => signOut(auth);
+}
 
 function renderAuth() {
   root.innerHTML = `
@@ -157,7 +176,7 @@ function renderApp() {
   route();
 }
 
-function route() {
+async function route() {
   const v = $("#view");
   const label = [...ADMIN_NAV, ...AMB_NAV].find(([k]) => k === S.page)?.[1].replace(/&amp;/g, "&") || "";
   $("#crumb").textContent = label;
@@ -167,7 +186,13 @@ function route() {
     ambassadors: adminAmbassadors, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
     "amb-dash": ambDash, "amb-order": ambOrder, "amb-buy": ambBuy, "amb-wallet": ambWallet,
   };
-  (map[S.page] || (() => v.innerHTML = "Not found"))(v);
+  try {
+    await (map[S.page] || (() => v.innerHTML = "Not found"))(v);
+  } catch (e) {
+    console.error("Screen failed:", S.page, e);
+    v.innerHTML = `<div class="card pad"><h3>Couldn't load this screen</h3>
+      <p class="sub" style="margin-top:6px">${(e && (e.message || e.code)) || e}</p></div>`;
+  }
 }
 
 // ---------- shared data loaders ----------
