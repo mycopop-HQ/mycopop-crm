@@ -343,14 +343,60 @@ async function adminAmbassadors(v) {
     <div class="pagehead"><div><h1>Ambassadors</h1><p>Tier sets the commission rate (edit in Settings). Add someone by their user ID after they sign up.</p></div>
       <button id="add" class="btn pri">+ Add ambassador</button></div>
     <div class="card"><div class="ch"><h3>Roster</h3></div>
-      <table><thead><tr><th>Name</th><th>Tier</th><th>Node</th><th>Available credit</th><th>Lifetime earned</th></tr></thead><tbody>
-        ${ambs.map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span><span class="nm">${a.name||"—"}</span>${a.title ? ` <span class="pill" style="background:var(--ink,#241B22);color:#fff">${a.title}</span>` : ""}<div class="sub">${a.email||""}</div></td>
+      <table><thead><tr><th>Name</th><th>Tier</th><th>Node</th><th>Available credit</th><th>Lifetime earned</th><th></th></tr></thead><tbody>
+        ${ambs.filter(a => a.id !== "house").map(a => `<tr><td><span class="av-sm">${initials(a.name)}</span><span class="nm">${a.name||"—"}</span>${a.title ? ` <span class="pill" style="background:var(--ink,#241B22);color:#fff">${a.title}</span>` : ""}${a.status === "disabled" ? ` <span class="pill tr">disabled</span>` : ""}<div class="sub">${a.email||""}</div></td>
           <td>${a.commissionRate === 0 ? '<span class="pill">House · 0%</span>' : a.tier === 2 ? '<span class="pill t20">Founders · 20%</span>' : '<span class="pill t15">15%</span>'}</td>
           <td>${nodes.find(n => n.id === a.nodeId)?.name || a.nodeId || "—"}</td>
           <td class="mono" style="color:var(--myc-d)">${money(a.walletAvailable)}</td>
-          <td class="mono">${money(a.walletEarnedLifetime)}</td></tr>`).join("") || `<tr><td colspan="5" class="sub">No ambassadors yet.</td></tr>`}
+          <td class="mono">${money(a.walletEarnedLifetime)}</td>
+          <td><button class="btn sm" data-edit-amb="${a.id}">Edit</button></td></tr>`).join("") || `<tr><td colspan="6" class="sub">No ambassadors yet.</td></tr>`}
       </tbody></table></div>`;
   $("#add").onclick = () => openAmbEditor(nodes);
+  v.querySelectorAll("[data-edit-amb]").forEach(btn => btn.onclick = () => openAmbEdit(ambs.find(a => a.id === btn.dataset.editAmb), nodes));
+}
+
+function openAmbEdit(a, nodes) {
+  const v = $("#view");
+  const disabled = a.status === "disabled";
+  v.innerHTML = `<div class="pagehead"><div><h1>Edit ambassador</h1><p>${a.name || a.email || a.id}</p></div>
+    <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:560px">
+      <label class="f">Name</label><input id="name" class="in" value="${a.name||""}">
+      <label class="f">Login email</label><input id="email" class="in" type="email" value="${a.email||""}">
+      <div class="grid g2"><div><label class="f">Tier</label><select id="tier" class="in"><option value="1" ${a.tier!==2?"selected":""}>Tier 1 · 15%</option><option value="2" ${a.tier===2?"selected":""}>Founders Tier · 20%</option></select></div>
+        <div><label class="f">Node</label><select id="node" class="in">${nodes.map(n => `<option value="${n.id}" ${n.id===a.nodeId?"selected":""}>${n.name}</option>`).join("")}</select></div></div>
+      <button id="save" class="btn pri" style="margin-top:16px;width:100%;justify-content:center">Save changes</button>
+    </div>
+    <div class="card pad" style="max-width:560px;margin-top:16px">
+      <h3 style="font-size:14px;margin-bottom:4px">Account access</h3>
+      <p class="sub" style="margin-bottom:12px">Reset issues a new temporary password to share. Disabling blocks their login immediately.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="resetpw" class="btn">Reset password</button>
+        <button id="toggle" class="btn ${disabled?"pri":"berry"}">${disabled?"Enable account":"Disable account"}</button>
+      </div>
+    </div>`;
+  $("#back").onclick = () => { S.page = "ambassadors"; route(); };
+  $("#save").onclick = () => safe(async () => {
+    const email = $("#email").value.trim();
+    if (email && email.toLowerCase() !== (a.email||"").toLowerCase())
+      await call("adminManageUser")({ uid: a.uid || a.id, email });   // change login email (server)
+    await setDoc(doc(db, "ambassadors", a.id), {
+      name: $("#name").value.trim(), email, tier: parseInt($("#tier").value), nodeId: $("#node").value,
+    }, { merge: true });
+    toast("Ambassador updated"); S.page = "ambassadors"; route();
+  });
+  $("#resetpw").onclick = () => safe(async () => {
+    const pw = prompt(`New temporary password for ${a.name || a.email} (min 6 characters):`);
+    if (!pw) return;
+    await call("adminManageUser")({ uid: a.uid || a.id, password: pw });
+    toast("Password reset — share the new one");
+  });
+  $("#toggle").onclick = () => safe(async () => {
+    const willDisable = !disabled;
+    await call("adminManageUser")({ uid: a.uid || a.id, disabled: willDisable });
+    await setDoc(doc(db, "ambassadors", a.id), { status: willDisable ? "disabled" : "active" }, { merge: true });
+    toast(willDisable ? "Account disabled" : "Account enabled"); S.page = "ambassadors"; route();
+  });
 }
 
 function openAmbEditor(nodes) {
