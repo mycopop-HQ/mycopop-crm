@@ -168,7 +168,7 @@ function renderApp() {
     : `${who?.title ? who.title : (who?.tier === 2 ? "Founders Tier" : "Tier 1")} · ${who?.tier === 2 ? "20%" : "15%"}`;
   root.innerHTML = `
   <div class="app">
-    <aside class="side">
+    <aside class="side" id="side">
       <div class="brand">
         <svg class="logo" viewBox="0 0 40 40" fill="none"><path d="M20 5C12 5 6 11 6 18c0 2 1 3 3 3h22c2 0 3-1 3-3 0-7-6-13-14-13z" fill="#E0922B"/><circle cx="14" cy="15" r="2" fill="#FBF4F0"/><circle cx="24" cy="13" r="2.4" fill="#FBF4F0"/><path d="M16 21h8l-1 11c0 2-2 3-3 3s-3-1-3-3l-1-11z" fill="#D6435A"/></svg>
         <div><b>Mycopop</b><small>${role === "admin" ? "Command" : "My field"}</small></div>
@@ -178,11 +178,13 @@ function renderApp() {
       </nav>
       <div class="foot">v1 · ${S.user.email}<br>${preview ? `<button id="exitview">← Exit preview</button>` : `<button id="changepw" style="background:none;border:0;color:inherit;cursor:pointer;text-decoration:underline;font:inherit;padding:0">Change password</button> · <button id="signout">Sign out</button>`}</div>
     </aside>
+    <div id="navbackdrop" class="navbackdrop"></div>
     <div class="main">
       ${preview ? `<div style="background:#241B22;color:#fff;padding:9px 18px;font-size:13px;display:flex;justify-content:space-between;align-items:center">
         <span>👁 Viewing as <b>${S.viewAs.name}</b> — read-only preview</span>
         <button id="exitview2" class="btn sm" style="background:#fff;color:#241B22">Exit to admin</button></div>` : ""}
       <div class="top">
+        <button id="menubtn" class="menu-btn" aria-label="Open menu">☰</button>
         <div class="crumb"><b>${role === "admin" ? "Admin" : "Ambassador"}</b> · <span id="crumb"></span></div>
         <div class="spacer"></div>
         <div class="who"><div class="ava">${initials(name)}</div><div><b>${name}</b><small>${sub}</small></div></div>
@@ -190,10 +192,15 @@ function renderApp() {
       <div class="wrap" id="view"></div>
     </div>
   </div>`;
+  const side = $("#side"), bd = $("#navbackdrop");
+  const closeNav = () => { if (side) side.classList.remove("open"); if (bd) bd.classList.remove("show"); };
+  if ($("#menubtn")) $("#menubtn").onclick = () => { side.classList.add("open"); bd.classList.add("show"); };
+  if (bd) bd.onclick = closeNav;
   $("#nav").onclick = (e) => {
     const b = e.target.closest("button[data-page]"); if (!b) return;
     S.page = b.dataset.page;
     $("#nav").querySelectorAll("button").forEach(x => x.classList.toggle("active", x === b));
+    closeNav();
     route();
   };
   const exitPreview = () => { S.viewAs = null; S.page = "viewas"; renderApp(); };
