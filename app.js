@@ -447,28 +447,34 @@ function openAmbEdit(a, nodes) {
 function openAmbEditor(nodes) {
   const v = $("#view");
   v.innerHTML = `<div class="pagehead"><div><h1>Add ambassador</h1>
-    <p>They must create an account first; paste their user ID from the “Almost there” screen.</p></div>
+    <p>Creates their login and grants access. They sign in with the temporary password (or use “Forgot password”).</p></div>
     <button id="back" class="btn">← Back</button></div>
     <div class="card pad" style="max-width:520px">
-      <label class="f">User ID (uid)</label><input id="uid" class="in mono">
       <label class="f">Name</label><input id="name" class="in">
-      <label class="f">Email</label><input id="email" class="in" type="email">
+      <label class="f">Login email</label><input id="email" class="in" type="email">
       <div class="grid g2"><div><label class="f">Tier</label><select id="tier" class="in"><option value="1">Tier 1 · 15%</option><option value="2">Founders Tier · 20%</option></select></div>
         <div><label class="f">Node</label><select id="node" class="in">${nodes.map(n => `<option value="${n.id}">${n.name}</option>`).join("")}</select></div></div>
+      <label class="f">Temporary password <span class="auto">blank = auto-generate</span></label><input id="pw" class="in" placeholder="leave blank to auto-generate">
       <button id="save" class="btn pri" style="margin-top:18px;width:100%;justify-content:center">Create &amp; grant access</button>
+      <p id="amberr" style="margin-top:12px;min-height:1.1em;font-size:13px"></p>
     </div>`;
-  $("#back").onclick = route;
+  $("#back").onclick = () => { S.page = "ambassadors"; route(); };
   $("#save").onclick = () => safe(async () => {
-    const uid = $("#uid").value.trim();
-    if (!uid) return toast("Enter the user's uid", true);
+    const email = $("#email").value.trim(), name = $("#name").value.trim();
+    const out = $("#amberr");
+    if (!email) { out.style.color = "#c0392b"; out.textContent = "Enter a login email."; return; }
+    out.style.color = "#777"; out.textContent = "Creating…";
+    const r = await call("adminCreateAmbassador")({ email, name, password: $("#pw").value.trim() || undefined });
+    const uid = r.data.uid;
     await setDoc(doc(db, "ambassadors", uid), {
-      uid, name: $("#name").value.trim(), email: $("#email").value.trim(),
-      tier: parseInt($("#tier").value), nodeId: $("#node").value, status: "active",
-      salesGoal: 0, walletAvailable: 0, walletPending: 0, walletSpent: 0,
-      walletCashedOut: 0, walletEarnedLifetime: 0,
+      uid, name, email, tier: parseInt($("#tier").value), nodeId: $("#node").value, status: "active",
+      salesGoal: 0, walletAvailable: 0, walletPending: 0, walletSpent: 0, walletCashedOut: 0, walletEarnedLifetime: 0,
     }, { merge: true });
-    await call("setUserRole")({ uid, role: "ambassador" });
-    toast("Ambassador added"); S.page = "ambassadors"; route();
+    out.style.color = "#2a7";
+    out.innerHTML = r.data.password
+      ? `✅ Created <b>${name || email}</b>. Temp password: <b class="mono">${r.data.password}</b> — copy &amp; share it now.`
+      : `✅ Linked existing account <b>${email}</b> (password unchanged) — now an ambassador.`;
+    toast("Ambassador created");
   });
 }
 
