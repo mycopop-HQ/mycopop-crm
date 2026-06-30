@@ -96,9 +96,8 @@ function renderAuth() {
     </div>
     <div style="text-align:right;margin-top:6px"><button id="forgot" type="button" style="background:none;border:0;color:#7a7a7a;font-size:12px;cursor:pointer;text-decoration:underline">Forgot password?</button></div>
     <button id="login" class="btn pri" style="width:100%;justify-content:center;margin-top:16px">Sign in</button>
-    <button id="signup" class="btn" style="width:100%;justify-content:center;margin-top:8px">Create account</button>
-    <p id="autherr" style="color:#c0392b;font-size:13px;min-height:1.1em;margin-top:12px;text-align:center"></p>
-    <p class="sub" style="margin-top:4px;text-align:center">New accounts have no access until an admin assigns a role.</p>
+    <p id="autherr" style="color:#c0392b;font-size:13px;min-height:1.1em;margin-top:14px;text-align:center"></p>
+    <p class="sub" style="margin-top:4px;text-align:center">Accounts are issued by an admin. Forgot your password? Use the link above.</p>
   </div></div>`;
   const pw = $("#pw"), tgl = $("#pwtoggle");
   tgl.onclick = () => {
@@ -135,13 +134,6 @@ function renderAuth() {
   };
   pw.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
   $("#email").addEventListener("keydown", (e) => { if (e.key === "Enter") pw.focus(); });
-  $("#signup").onclick = async () => {
-    err().style.color = "#777"; err().textContent = "Creating account…";
-    try {
-      await createUserWithEmailAndPassword(auth, $("#email").value.trim(), pw.value);
-      err().style.color = "#2a7"; err().textContent = "Account created. Ask an admin to grant access.";
-    } catch (e) { console.error(e); err().style.color = "#c0392b"; err().textContent = authError(e); }
-  };
 }
 
 function renderPending() {
