@@ -4,7 +4,7 @@ import { getAuth, onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, signOut, getIdTokenResult,
   sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs,
+import { getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
   addDoc, query, where, orderBy, limit, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { getFunctions, httpsCallable }
@@ -23,6 +23,12 @@ const $ = (s, p = document) => p.querySelector(s);
 const money = (n) => "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const num = (n) => (Number(n) || 0).toLocaleString("en-US");
 const initials = (s = "") => s.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const LEAD_STAGES = ["New", "Contacted", "Sampling", "Won", "Subscriber", "Lost"];
+const stagePill = (s) => {
+  const cls = (s === "Won" || s === "Subscriber") ? "con" : s === "Lost" ? "own" : "tr";
+  return `<span class="pill ${cls}">${esc(s || "New")}</span>`;
+};
 function toast(msg, isErr = false) {
   const t = document.getElementById("toast");
   t.textContent = msg; t.className = "toast show" + (isErr ? " err" : "");
@@ -152,10 +158,10 @@ function renderPending() {
 // ============================================================
 const ADMIN_NAV = [
   ["overview", "Overview"], ["batches", "Batches &amp; pricing"], ["inventory", "Inventory &amp; nodes"],
-  ["ambassadors", "Ambassadors"], ["direct", "Direct sale"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["viewas", "View as…"], ["settings", "Settings &amp; rules"],
+  ["ambassadors", "Ambassadors"], ["leads", "Clients &amp; leads"], ["direct", "Direct sale"], ["orders", "Orders"], ["cashouts", "Cash-outs"], ["viewas", "View as…"], ["settings", "Settings &amp; rules"],
 ];
 const AMB_NAV = [
-  ["amb-dash", "My dashboard"], ["amb-order", "Place order"], ["amb-buy", "Buy &amp; convert"], ["amb-wallet", "Wallet"],
+  ["amb-dash", "My dashboard"], ["amb-leads", "My clients"], ["amb-order", "Place order"], ["amb-buy", "Buy &amp; convert"], ["amb-wallet", "Wallet"],
 ];
 
 function renderApp() {
@@ -244,8 +250,8 @@ async function route() {
   v.innerHTML = `<p class="sub">Loading…</p>`;
   const map = {
     overview: adminOverview, batches: adminBatches, inventory: adminInventory,
-    ambassadors: adminAmbassadors, direct: adminDirectSale, viewas: adminViewAs, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
-    "amb-dash": ambDash, "amb-order": ambOrder, "amb-buy": ambBuy, "amb-wallet": ambWallet,
+    ambassadors: adminAmbassadors, leads: adminLeads, direct: adminDirectSale, viewas: adminViewAs, orders: adminOrders, cashouts: adminCashouts, settings: adminSettings,
+    "amb-dash": ambDash, "amb-leads": ambLeads, "amb-order": ambOrder, "amb-buy": ambBuy, "amb-wallet": ambWallet,
   };
   try {
     await (map[S.page] || (() => v.innerHTML = "Not found"))(v);
@@ -491,6 +497,116 @@ async function adminViewAs(v) {
   v.querySelectorAll("[data-view]").forEach(btn => btn.onclick = () => {
     S.viewAs = ambs.find(a => a.id === btn.dataset.view);
     S.page = "amb-dash"; renderApp();
+  });
+}
+
+// ============================================================
+// CLIENTS & LEADS
+// ============================================================
+async function adminLeads(v) {
+  const [leads, ambs, nodes] = await Promise.all([allDocs("leads"), allDocs("ambassadors"), allDocs("nodes")]);
+  const counts = LEAD_STAGES.map(s => [s, leads.filter(l => (l.stage || "New") === s).length]);
+  v.innerHTML = `<div class="pagehead"><div><h1>Clients &amp; leads</h1><p>Every contact in the funnel — form submissions, ambassador contacts, wholesale.</p></div>
+      <button id="add" class="btn pri">+ Add lead</button></div>
+    <div class="grid g4" style="margin-bottom:16px">
+      ${counts.slice(0, 4).map(([s, n]) => `<div class="card pad kpi"><div class="lab">${s}</div><div class="val mono">${n}</div></div>`).join("")}
+    </div>
+    <div class="card"><div class="ch"><h3>Pipeline</h3><span class="sub">${leads.length} total · ${counts[4][1]} subscribers · ${counts[5][1]} lost</span></div>
+      <table><thead><tr><th>Name</th><th>Stage</th><th>Interest</th><th>Owner</th><th>Node</th><th>Contact</th><th></th></tr></thead><tbody>
+        ${leads.map(l => `<tr>
+          <td><span class="nm">${esc(l.name) || "—"}</span><div class="sub">${esc(l.source || "")}</div></td>
+          <td>${stagePill(l.stage)}</td>
+          <td class="sub">${esc(l.interest || "—")}</td>
+          <td>${l.ambassadorId ? ambName(ambs, l.ambassadorId) : '<span class="sub">unassigned</span>'}</td>
+          <td>${nodes.find(n => n.id === l.nodeId)?.name || '<span class="sub">—</span>'}</td>
+          <td class="sub">${esc(l.email || "")}${l.phone ? " · " + esc(l.phone) : ""}</td>
+          <td><button class="btn sm" data-lead="${l.id}">Open</button></td></tr>`).join("") || `<tr><td colspan="7" class="sub">No leads yet — share your contact form or add one.</td></tr>`}
+      </tbody></table></div>`;
+  $("#add").onclick = () => openLeadEditor(null, { nodes, ambs, admin: true });
+  v.querySelectorAll("[data-lead]").forEach(b => b.onclick = () => openLeadEditor(leads.find(l => l.id === b.dataset.lead), { nodes, ambs, admin: true }));
+}
+
+async function ambLeads(v) {
+  await loadAmb();
+  const [leads, nodes] = await Promise.all([
+    getDocs(query(collection(db, "leads"), where("ambassadorId", "==", actorUid()))).then(s => s.docs.map(d => ({ id: d.id, ...d.data() }))),
+    allDocs("nodes"),
+  ]);
+  v.innerHTML = `<div class="pagehead"><div><h1>My clients</h1><p>Your contacts and where they are in the funnel.</p></div>
+      ${S.viewAs ? "" : `<button id="add" class="btn pri">+ Add contact</button>`}</div>
+    <div class="card"><table><thead><tr><th>Name</th><th>Stage</th><th>Contact</th><th></th></tr></thead><tbody>
+        ${leads.map(l => `<tr><td><span class="nm">${esc(l.name) || "—"}</span><div class="sub">${esc(l.location || "")}</div></td>
+          <td>${stagePill(l.stage)}</td><td class="sub">${esc(l.email || "")}${l.phone ? " · " + esc(l.phone) : ""}</td>
+          <td><button class="btn sm" data-lead="${l.id}">Open</button></td></tr>`).join("") || `<tr><td colspan="4" class="sub">No contacts yet — add your first.</td></tr>`}
+      </tbody></table></div>`;
+  if ($("#add")) $("#add").onclick = () => openLeadEditor(null, { nodes, ambs: [], admin: false });
+  v.querySelectorAll("[data-lead]").forEach(b => b.onclick = () => openLeadEditor(leads.find(l => l.id === b.dataset.lead), { nodes, ambs: [], admin: false }));
+}
+
+function openLeadEditor(lead, { nodes, ambs, admin }) {
+  const v = $("#view"); const l = lead || {}; const isNew = !lead;
+  const opt = (sel, val, label) => `<option value="${esc(val)}" ${sel ? "selected" : ""}>${esc(label)}</option>`;
+  v.innerHTML = `<div class="pagehead"><div><h1>${isNew ? "Add" : "Edit"} ${admin ? "lead" : "contact"}</h1>
+      <p>${l.source === "contact-form" ? "Came in via the public contact form." : "Track this contact through the funnel."}</p></div>
+      <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:640px">
+      <div class="grid g2">
+        <div><label class="f">Name</label><input id="l_name" class="in" value="${esc(l.name)}"></div>
+        <div><label class="f">Stage</label><select id="l_stage" class="in">${LEAD_STAGES.map(s => opt((l.stage || "New") === s, s, s)).join("")}</select></div>
+      </div>
+      <div class="grid g2">
+        <div><label class="f">Email</label><input id="l_email" class="in" value="${esc(l.email)}"></div>
+        <div><label class="f">Phone</label><input id="l_phone" class="in" value="${esc(l.phone)}"></div>
+      </div>
+      <div class="grid g2">
+        <div><label class="f">Instagram</label><input id="l_ig" class="in" value="${esc(l.instagram)}"></div>
+        <div><label class="f">TikTok</label><input id="l_tt" class="in" value="${esc(l.tiktok)}"></div>
+      </div>
+      <div class="grid g2">
+        <div><label class="f">Website</label><input id="l_web" class="in" value="${esc(l.website)}"></div>
+        <div><label class="f">Location</label><input id="l_loc" class="in" value="${esc(l.location)}"></div>
+      </div>
+      ${admin ? `<div class="grid g2">
+        <div><label class="f">Owner (ambassador)</label><select id="l_owner" class="in">${opt(!l.ambassadorId, "", "— unassigned —")}${ambs.filter(a => a.id !== "house").map(a => opt(l.ambassadorId === a.id, a.id, a.name || a.email)).join("")}</select></div>
+        <div><label class="f">Serviced by node</label><select id="l_node" class="in">${opt(!l.nodeId, "", "— none —")}${nodes.map(n => opt(l.nodeId === n.id, n.id, n.name)).join("")}</select></div>
+      </div>` : `<input type="hidden" id="l_node" value="${esc(l.nodeId || S.amb?.nodeId || "")}">`}
+      <div class="grid g2">
+        <div><label class="f">Billing contact</label><input id="l_billc" class="in" value="${esc(l.billingContact)}"></div>
+        <div><label class="f">Billing terms</label><input id="l_billt" class="in" placeholder="Net 30, prepaid…" value="${esc(l.billingTerms)}"></div>
+      </div>
+      <div class="grid g2">
+        <div><label class="f">Sales contact</label><input id="l_salesc" class="in" value="${esc(l.salesContact)}"></div>
+        <div><label class="f">Est. volume / cadence</label><input id="l_vol" class="in" value="${esc(l.estVolume)}"></div>
+      </div>
+      <label class="f">Installation notes</label><textarea id="l_install" class="in" style="min-height:58px">${esc(l.installNotes)}</textarea>
+      <label class="f">Notes</label><textarea id="l_notes" class="in" style="min-height:70px">${esc(l.notes)}</textarea>
+      ${l.message ? `<label class="f">Their message (from the form)</label><div class="card pad" style="background:var(--blush);font-size:13px">${esc(l.message)}</div>` : ""}
+      <button id="l_save" class="btn pri" style="margin-top:16px;width:100%;justify-content:center">${isNew ? "Create" : "Save"}</button>
+      ${(!isNew && admin) ? `<button id="l_del" class="btn" style="width:100%;justify-content:center;margin-top:8px;color:var(--berry-d)">Delete lead</button>` : ""}
+    </div>`;
+  $("#back").onclick = () => { S.page = admin ? "leads" : "amb-leads"; route(); };
+  $("#l_save").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to edit", true);
+    const data = {
+      name: $("#l_name").value.trim(), stage: $("#l_stage").value,
+      email: $("#l_email").value.trim(), phone: $("#l_phone").value.trim(),
+      instagram: $("#l_ig").value.trim(), tiktok: $("#l_tt").value.trim(),
+      website: $("#l_web").value.trim(), location: $("#l_loc").value.trim(),
+      billingContact: $("#l_billc").value.trim(), billingTerms: $("#l_billt").value.trim(),
+      salesContact: $("#l_salesc").value.trim(), estVolume: $("#l_vol").value.trim(),
+      installNotes: $("#l_install").value.trim(), notes: $("#l_notes").value.trim(),
+      nodeId: ($("#l_node") && $("#l_node").value) || null,
+      updatedAt: serverTimestamp(),
+    };
+    if (admin) data.ambassadorId = $("#l_owner").value || null;
+    else data.ambassadorId = actorUid();
+    if (isNew) { data.createdAt = serverTimestamp(); data.source = l.source || (admin ? "manual" : "ambassador"); await addDoc(collection(db, "leads"), data); }
+    else await setDoc(doc(db, "leads", lead.id), data, { merge: true });
+    toast("Saved"); S.page = admin ? "leads" : "amb-leads"; route();
+  });
+  if ($("#l_del")) $("#l_del").onclick = () => safe(async () => {
+    if (!confirm("Delete this lead permanently?")) return;
+    await deleteDoc(doc(db, "leads", lead.id)); toast("Lead deleted"); S.page = "leads"; route();
   });
 }
 
