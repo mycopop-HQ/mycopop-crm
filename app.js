@@ -373,7 +373,7 @@ async function adminInventory(v) {
   const own = lots.filter(l => l.ownership === "owned").reduce((s, l) => s + l.quantity, 0);
   v.innerHTML = `
     <div class="pagehead"><div><h1>Inventory &amp; nodes</h1><p>Every can by node, holder and ownership.</p></div>
-      <button id="manage" class="btn pri">Manage stock</button></div>
+      <div style="display:flex;gap:8px"><button id="logsamp" class="btn">Log samples</button><button id="manage" class="btn pri">Manage stock</button></div></div>
     <div class="grid g3" style="margin-bottom:18px">
       <div class="card pad kpi"><div class="lab">Consignment · total</div><div class="val mono">${num(con)}</div></div>
       <div class="card pad kpi"><div class="lab">…unallocated pool</div><div class="val mono">${num(pool)}</div></div>
@@ -391,6 +391,7 @@ async function adminInventory(v) {
       }).join("") || `<div class="card pad sub">No nodes yet.</div>`}
     </div>`;
   $("#manage").onclick = () => openStockManager(nodes, ambs, batches);
+  $("#logsamp").onclick = () => openSampleLogger({ nodes, ambs, batches, admin: true });
 }
 
 function openStockManager(nodes, ambs, batches) {
@@ -433,6 +434,36 @@ function openStockManager(nodes, ambs, batches) {
     const r = await call("adminStockOp")(payload);
     out.style.color = "#2a7"; out.textContent = "✅ Done — inventory updated.";
     toast("Stock updated");
+  });
+}
+
+function openSampleLogger({ nodes, ambs, batches, admin }) {
+  const v = $("#view");
+  const reps = (ambs || []).filter(a => a.id !== "house");
+  v.innerHTML = `<div class="pagehead"><div><h1>Log samples</h1><p>Logging a sample removes those cans from inventory.</p></div>
+      <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:520px">
+      ${admin ? `<label class="f">Source</label><select id="src" class="in"><option value="rep">A rep's stock</option><option value="pool">Node pool (unallocated)</option></select>
+      <div id="repBox"><label class="f">Rep (attributed)</label><select id="rep" class="in">${reps.map(a => `<option value="${a.id}">${esc(a.name || a.email)}</option>`).join("")}</select></div>
+      <div id="nodeBox" style="display:none"><label class="f">Node</label><select id="node" class="in">${nodes.map(n => `<option value="${n.id}">${esc(n.name)}</option>`).join("")}</select></div>` : ""}
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b => `<option value="${b.id}">${esc(b.code)}</option>`).join("")}</select>
+      <label class="f">Cans given as samples</label><input id="cans" class="in mono" type="number" value="0">
+      <label class="f">Note (optional)</label><input id="note" class="in" placeholder="event, account, etc.">
+      <button id="go" class="btn pri" style="margin-top:16px;width:100%;justify-content:center">Log samples</button>
+      <p id="msg" style="margin-top:10px;min-height:1.1em;font-size:13px"></p>
+    </div>`;
+  $("#back").onclick = () => { S.page = admin ? "inventory" : "amb-dash"; route(); };
+  if (admin) { const sync = () => { const p = $("#src").value === "pool"; $("#nodeBox").style.display = p ? "block" : "none"; $("#repBox").style.display = p ? "none" : "block"; }; $("#src").onchange = sync; sync(); }
+  $("#go").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to log", true);
+    const out = $("#msg"); out.style.color = "#c0392b";
+    const cans = parseInt($("#cans").value) || 0;
+    if (cans <= 0) { out.textContent = "Enter how many cans."; return; }
+    const payload = { batchId: $("#batch").value, cans, note: $("#note").value.trim() };
+    if (admin) { if ($("#src").value === "pool") { payload.fromPool = true; payload.sourceNodeId = $("#node").value; } else { payload.ambassadorId = $("#rep").value; } }
+    const r = await call("logSample")(payload);
+    out.style.color = "#2a7"; out.textContent = `✅ Logged ${cans} samples — ${r.data.remaining} left in that stock.`;
+    toast("Samples logged");
   });
 }
 
@@ -788,9 +819,10 @@ async function ambDash(v) {
         <div style="display:flex;justify-content:space-between;margin-top:10px"><span class="pill con">Consignment · earn commission</span><b class="mono" style="font-size:18px">${num(con)}</b></div>
         <div style="display:flex;justify-content:space-between;margin-top:12px"><span class="pill own">Owned · keep retail</span><b class="mono" style="font-size:18px">${num(own)}</b></div></div>
       <div class="card pad"><h3 style="font-size:14px;margin-bottom:10px">Quick actions</h3>
-        <button class="btn berry" style="width:100%;justify-content:center;margin-bottom:8px" onclick="">Use “Place order” to sell</button>
-        <p class="sub">Sell from consignment to earn commission, or buy stock to own at a discount with your credit.</p></div>
+        <button id="logsamp" class="btn berry" style="width:100%;justify-content:center;margin-bottom:8px">Log samples given out</button>
+        <p class="sub">Use “Place order” to sell from consignment (earn commission), or “Buy &amp; convert” to own stock at a discount.</p></div>
     </div>`;
+  if ($("#logsamp")) $("#logsamp").onclick = async () => openSampleLogger({ batches: await allDocs("batches"), admin: false });
 }
 
 async function ambOrder(v) {
