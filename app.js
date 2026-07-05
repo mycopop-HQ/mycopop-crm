@@ -366,26 +366,74 @@ function openBatchEditor(b, spread) {
 }
 
 async function adminInventory(v) {
-  const [lots, nodes, ambs] = await Promise.all([allDocs("stockLots"), allDocs("nodes"), allDocs("ambassadors")]);
-  const central = lots.filter(l => l.location === "central").reduce((s, l) => s + l.quantity, 0);
-  const con = lots.filter(l => l.ownership === "consignment" && l.location !== "central").reduce((s, l) => s + l.quantity, 0);
+  const [lots, nodes, ambs, batches] = await Promise.all([allDocs("stockLots"), allDocs("nodes"), allDocs("ambassadors"), allDocs("batches")]);
+  const nm = (uid) => ambs.find(a => a.id === uid)?.name || (uid ? uid.slice(0, 6) : "pool");
+  const con = lots.filter(l => l.ownership === "consignment").reduce((s, l) => s + l.quantity, 0);
+  const pool = lots.filter(l => l.ownership === "consignment" && !l.ownerAmbassadorId).reduce((s, l) => s + l.quantity, 0);
   const own = lots.filter(l => l.ownership === "owned").reduce((s, l) => s + l.quantity, 0);
   v.innerHTML = `
-    <div class="pagehead"><div><h1>Inventory &amp; nodes</h1><p>Every can by node and ownership pool.</p></div></div>
+    <div class="pagehead"><div><h1>Inventory &amp; nodes</h1><p>Every can by node, holder and ownership.</p></div>
+      <button id="manage" class="btn pri">Manage stock</button></div>
     <div class="grid g3" style="margin-bottom:18px">
-      <div class="card pad kpi"><div class="lab">Central warehouse</div><div class="val mono">${num(central)}</div></div>
-      <div class="card pad kpi"><div class="lab">At nodes · consignment</div><div class="val mono">${num(con)}</div></div>
-      <div class="card pad kpi"><div class="lab">At nodes · owned</div><div class="val mono">${num(own)}</div></div>
+      <div class="card pad kpi"><div class="lab">Consignment · total</div><div class="val mono">${num(con)}</div></div>
+      <div class="card pad kpi"><div class="lab">…unallocated pool</div><div class="val mono">${num(pool)}</div></div>
+      <div class="card pad kpi"><div class="lab">Owned · total</div><div class="val mono">${num(own)}</div></div>
     </div>
-    <div class="grid g3">
+    <div class="grid g2">
       ${nodes.map(n => {
-        const c = lots.filter(l => l.nodeId === n.id && l.ownership === "consignment").reduce((s, l) => s + l.quantity, 0);
-        const o = lots.filter(l => l.nodeId === n.id && l.ownership === "owned").reduce((s, l) => s + l.quantity, 0);
-        return `<div class="card pad"><h3 style="font-size:14px">${n.name}</h3><div class="sub">${n.location || ""}</div>
-          <div style="display:flex;justify-content:space-between;margin-top:12px"><span class="pill con">Consignment</span><b class="mono">${num(c)}</b></div>
-          <div style="display:flex;justify-content:space-between;margin-top:10px"><span class="pill own">Owned</span><b class="mono">${num(o)}</b></div></div>`;
+        const nl = lots.filter(l => l.nodeId === n.id && l.quantity > 0);
+        const poolQ = nl.filter(l => l.ownership === "consignment" && !l.ownerAmbassadorId).reduce((s, l) => s + l.quantity, 0);
+        const rows = nl.filter(l => l.ownerAmbassadorId).sort((a, b) => a.ownership.localeCompare(b.ownership))
+          .map(l => `<div style="display:flex;justify-content:space-between;margin-top:8px"><span class="pill ${l.ownership === "owned" ? "own" : "con"}">${esc(nm(l.ownerAmbassadorId))} · ${l.ownership}</span><b class="mono">${num(l.quantity)}</b></div>`).join("");
+        return `<div class="card pad"><h3 style="font-size:14px">${esc(n.name)}</h3><div class="sub">${esc(n.location || "")}</div>
+          <div style="display:flex;justify-content:space-between;margin-top:12px"><span class="pill con">Unallocated pool</span><b class="mono">${num(poolQ)}</b></div>
+          ${rows || '<div class="sub" style="margin-top:8px">No rep-held stock.</div>'}</div>`;
       }).join("") || `<div class="card pad sub">No nodes yet.</div>`}
     </div>`;
+  $("#manage").onclick = () => openStockManager(nodes, ambs, batches);
+}
+
+function openStockManager(nodes, ambs, batches) {
+  const v = $("#view");
+  const reps = ambs.filter(a => a.id !== "house");
+  const ownerOpts = `<option value="">— node pool (unallocated) —</option>${reps.map(a => `<option value="${a.id}">${esc(a.name || a.email)}</option>`).join("")}`;
+  const nodeOpts = nodes.map(n => `<option value="${n.id}">${esc(n.name)}</option>`).join("");
+  const lotBlock = (pfx, label) => `<h3 style="font-size:13px;margin:14px 0 4px" ${pfx === "f" ? 'id="fromHead"' : 'id="toHead"'}>${label}</h3>
+    <div class="grid g3">
+      <div><label class="f">Node</label><select id="${pfx}node" class="in">${nodeOpts}</select></div>
+      <div><label class="f">Type</label><select id="${pfx}own" class="in"><option value="consignment">Consignment</option><option value="owned">Owned</option></select></div>
+      <div><label class="f">Holder</label><select id="${pfx}owner" class="in">${ownerOpts}</select></div>
+    </div>`;
+  v.innerHTML = `<div class="pagehead"><div><h1>Manage stock</h1><p>Receive new cans, allocate to nodes or reps, or reconcile exact counts.</p></div>
+      <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:560px">
+      <label class="f">Operation</label><select id="op" class="in">
+        <option value="receive">Receive — add new stock</option>
+        <option value="transfer">Transfer / allocate — move between holders</option>
+        <option value="adjust">Adjust — set an exact count (reconcile)</option></select>
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b => `<option value="${b.id}">${esc(b.code)}</option>`).join("")}</select>
+      <div id="fromBox" style="display:none">${lotBlock("f", "From")}</div>
+      ${lotBlock("t", "Destination")}
+      <label class="f">Cans</label><input id="qty" class="in mono" type="number" value="0">
+      <button id="go" class="btn pri" style="margin-top:16px;width:100%;justify-content:center">Apply</button>
+      <p id="smsg" style="margin-top:10px;min-height:1.1em;font-size:13px"></p>
+    </div>`;
+  const sync = () => { const t = $("#op").value; $("#fromBox").style.display = t === "transfer" ? "block" : "none"; $("#toHead").textContent = t === "transfer" ? "To" : "Destination"; };
+  $("#op").onchange = sync; sync();
+  $("#back").onclick = () => { S.page = "inventory"; route(); };
+  const spec = (pfx) => ({ node: $(`#${pfx}node`).value, ownership: $(`#${pfx}own`).value, owner: $(`#${pfx}owner`).value || null });
+  $("#go").onclick = () => safe(async () => {
+    const out = $("#smsg"); out.style.color = "#c0392b";
+    const op = $("#op").value, batchId = $("#batch").value, qty = parseInt($("#qty").value) || 0;
+    const to = spec("t");
+    if (to.ownership === "owned" && !to.owner) { out.textContent = "Owned stock needs a holder (rep)."; return; }
+    if (qty <= 0 && op !== "adjust") { out.textContent = "Enter a positive number of cans."; return; }
+    const payload = { op, batchId, qty, to };
+    if (op === "transfer") { payload.from = spec("f"); if (payload.from.ownership === "owned" && !payload.from.owner) { out.textContent = "Source owned stock needs a holder."; return; } }
+    const r = await call("adminStockOp")(payload);
+    out.style.color = "#2a7"; out.textContent = "✅ Done — inventory updated.";
+    toast("Stock updated");
+  });
 }
 
 async function adminAmbassadors(v) {
@@ -714,7 +762,7 @@ async function adminSettings(v) {
 async function loadAmb() { S.amb = (await getDoc(doc(db, "ambassadors", actorUid()))).data() || {}; }
 async function myLots() {
   return (await allDocs("stockLots")).filter(l =>
-    (l.ownership === "consignment" && l.nodeId === S.amb.nodeId) ||
+    (l.ownership === "consignment" && l.ownerAmbassadorId === actorUid()) ||
     (l.ownership === "owned" && l.ownerAmbassadorId === actorUid()));
 }
 
