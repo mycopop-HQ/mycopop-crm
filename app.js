@@ -397,41 +397,60 @@ async function adminInventory(v) {
 function openStockManager(nodes, ambs, batches) {
   const v = $("#view");
   const reps = ambs.filter(a => a.id !== "house");
+  const repOpts = reps.map(a => `<option value="${a.id}" data-node="${esc(a.nodeId || "")}">${esc(a.name || a.email)}${a.nodeId ? "" : " (no node)"}</option>`).join("");
   const ownerOpts = `<option value="">— node pool (unallocated) —</option>${reps.map(a => `<option value="${a.id}">${esc(a.name || a.email)}</option>`).join("")}`;
   const nodeOpts = nodes.map(n => `<option value="${n.id}">${esc(n.name)}</option>`).join("");
-  const lotBlock = (pfx, label) => `<h3 style="font-size:13px;margin:14px 0 4px" ${pfx === "f" ? 'id="fromHead"' : 'id="toHead"'}>${label}</h3>
+  const lotBlock = (pfx, label) => `<h3 style="font-size:13px;margin:14px 0 4px" id="${pfx}Head">${label}</h3>
     <div class="grid g3">
       <div><label class="f">Node</label><select id="${pfx}node" class="in">${nodeOpts}</select></div>
       <div><label class="f">Type</label><select id="${pfx}own" class="in"><option value="consignment">Consignment</option><option value="owned">Owned</option></select></div>
       <div><label class="f">Holder</label><select id="${pfx}owner" class="in">${ownerOpts}</select></div>
     </div>`;
-  v.innerHTML = `<div class="pagehead"><div><h1>Manage stock</h1><p>Receive new cans, allocate to nodes or reps, or reconcile exact counts.</p></div>
+  v.innerHTML = `<div class="pagehead"><div><h1>Manage stock</h1><p>Allocate cans to a rep, receive new stock, transfer, or reconcile.</p></div>
       <button id="back" class="btn">← Back</button></div>
     <div class="card pad" style="max-width:560px">
-      <label class="f">Operation</label><select id="op" class="in">
-        <option value="receive">Receive — add new stock</option>
-        <option value="transfer">Transfer / allocate — move between holders</option>
+      <label class="f">What do you want to do?</label><select id="op" class="in">
+        <option value="allocate">Allocate to a rep — hand cans to a salesperson</option>
+        <option value="receive">Receive — add new stock to a node pool</option>
+        <option value="transfer">Transfer — move between any holders</option>
         <option value="adjust">Adjust — set an exact count (reconcile)</option></select>
       <label class="f">Batch</label><select id="batch" class="in">${batches.map(b => `<option value="${b.id}">${esc(b.code)}</option>`).join("")}</select>
+      <div id="allocBox"><label class="f">Give to rep</label><select id="arep" class="in">${repOpts}</select>
+        <p class="sub" id="ahint" style="margin-top:5px"></p></div>
       <div id="fromBox" style="display:none">${lotBlock("f", "From")}</div>
-      ${lotBlock("t", "Destination")}
+      <div id="toBox" style="display:none">${lotBlock("t", "Destination")}</div>
       <label class="f">Cans</label><input id="qty" class="in mono" type="number" value="0">
       <button id="go" class="btn pri" style="margin-top:16px;width:100%;justify-content:center">Apply</button>
       <p id="smsg" style="margin-top:10px;min-height:1.1em;font-size:13px"></p>
     </div>`;
-  const sync = () => { const t = $("#op").value; $("#fromBox").style.display = t === "transfer" ? "block" : "none"; $("#toHead").textContent = t === "transfer" ? "To" : "Destination"; };
-  $("#op").onchange = sync; sync();
+  const repNode = () => $("#arep").selectedOptions[0]?.dataset.node || "";
+  const sync = () => {
+    const t = $("#op").value;
+    $("#allocBox").style.display = t === "allocate" ? "block" : "none";
+    $("#fromBox").style.display = t === "transfer" ? "block" : "none";
+    $("#toBox").style.display = (t !== "allocate") ? "block" : "none";
+    if ($("#tHead")) $("#tHead").textContent = t === "transfer" ? "To" : t === "adjust" ? "Set this lot to" : "Destination";
+    if (t === "allocate") { const nn = nodes.find(n => n.id === repNode())?.name || "their node"; $("#ahint").textContent = `Moves cans from ${nn}'s unallocated pool → this rep's own consignment.`; }
+  };
+  $("#op").onchange = sync; $("#arep").onchange = sync; sync();
   $("#back").onclick = () => { S.page = "inventory"; route(); };
   const spec = (pfx) => ({ node: $(`#${pfx}node`).value, ownership: $(`#${pfx}own`).value, owner: $(`#${pfx}owner`).value || null });
   $("#go").onclick = () => safe(async () => {
     const out = $("#smsg"); out.style.color = "#c0392b";
     const op = $("#op").value, batchId = $("#batch").value, qty = parseInt($("#qty").value) || 0;
-    const to = spec("t");
-    if (to.ownership === "owned" && !to.owner) { out.textContent = "Owned stock needs a holder (rep)."; return; }
     if (qty <= 0 && op !== "adjust") { out.textContent = "Enter a positive number of cans."; return; }
-    const payload = { op, batchId, qty, to };
-    if (op === "transfer") { payload.from = spec("f"); if (payload.from.ownership === "owned" && !payload.from.owner) { out.textContent = "Source owned stock needs a holder."; return; } }
-    const r = await call("adminStockOp")(payload);
+    let payload;
+    if (op === "allocate") {
+      const rep = $("#arep").value, node = repNode();
+      if (!node) { out.textContent = "This rep has no node set — set their node first."; return; }
+      payload = { op: "transfer", batchId, qty, from: { node, ownership: "consignment", owner: null }, to: { node, ownership: "consignment", owner: rep } };
+    } else {
+      const to = spec("t");
+      if (to.ownership === "owned" && !to.owner) { out.textContent = "Owned stock needs a holder (rep)."; return; }
+      payload = { op, batchId, qty, to };
+      if (op === "transfer") { payload.from = spec("f"); if (payload.from.ownership === "owned" && !payload.from.owner) { out.textContent = "Source owned stock needs a holder."; return; } }
+    }
+    await call("adminStockOp")(payload);
     out.style.color = "#2a7"; out.textContent = "✅ Done — inventory updated.";
     toast("Stock updated");
   });
@@ -464,6 +483,42 @@ function openSampleLogger({ nodes, ambs, batches, admin }) {
     const r = await call("logSample")(payload);
     out.style.color = "#2a7"; out.textContent = `✅ Logged ${cans} samples — ${r.data.remaining} left in that stock.`;
     toast("Samples logged");
+  });
+}
+
+function openRetailSale({ nodes, ambs, batches, admin }) {
+  const v = $("#view");
+  const reps = (ambs || []).filter(a => a.id !== "house");
+  v.innerHTML = `<div class="pagehead"><div><h1>Retail / event sale</h1><p>Direct-to-consumer sales at events (RTDs, mixers). Removes cans from inventory and books the revenue.</p></div>
+      <button id="back" class="btn">← Back</button></div>
+    <div class="card pad" style="max-width:520px">
+      ${admin ? `<label class="f">Sold by (rep)</label><select id="rep" class="in">${reps.map(a => `<option value="${a.id}">${esc(a.name || a.email)}</option>`).join("")}</select>` : ""}
+      <label class="f">Source of cans</label><select id="src" class="in"><option value="consignment">Rep's consignment</option><option value="owned">Rep's owned</option>${admin ? '<option value="pool">Node pool (unallocated)</option>' : ''}</select>
+      ${admin ? `<div id="poolNodeBox" style="display:none"><label class="f">Node (pool)</label><select id="pnode" class="in">${nodes.map(n => `<option value="${n.id}">${esc(n.name)}</option>`).join("")}</select></div>` : ""}
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b => `<option value="${b.id}">${esc(b.code)}</option>`).join("")}</select>
+      <div class="grid g2"><div><label class="f">Cans sold</label><input id="cans" class="in mono" type="number" value="0"></div>
+        <div><label class="f">Price / can ($)</label><input id="price" class="in mono" type="number" step="0.01" value="0"></div></div>
+      <label class="f">Event / note</label><input id="note" class="in" placeholder="e.g. BESOS">
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px"><input type="checkbox" id="comm" checked> Rep earns commission (their tier %)</label>
+      <div style="display:flex;justify-content:space-between;padding:12px 0;border-top:1px solid var(--line);margin-top:12px"><span>Revenue</span><b class="mono" id="rev">—</b></div>
+      <button id="go" class="btn pri" style="width:100%;justify-content:center">Record sale</button>
+      <p id="msg" style="margin-top:10px;min-height:1.1em;font-size:13px"></p>
+    </div>`;
+  const recalc = () => { $("#rev").textContent = money((parseFloat($("#price").value) || 0) * (parseInt($("#cans").value) || 0)); };
+  ["#cans", "#price"].forEach(s => $(s).oninput = recalc); recalc();
+  if (admin) { const sync = () => { $("#poolNodeBox").style.display = $("#src").value === "pool" ? "block" : "none"; }; $("#src").onchange = sync; sync(); }
+  $("#back").onclick = () => { S.page = admin ? "orders" : "amb-dash"; route(); };
+  $("#go").onclick = () => safe(async () => {
+    if (S.viewAs) return toast("Read-only preview — exit to record", true);
+    const out = $("#msg"); out.style.color = "#c0392b";
+    const cans = parseInt($("#cans").value) || 0, price = parseFloat($("#price").value) || 0;
+    if (cans <= 0) { out.textContent = "Enter cans sold."; return; }
+    const payload = { batchId: $("#batch").value, cans, perCanPrice: price, note: $("#note").value.trim(), payCommission: $("#comm").checked };
+    if (admin) { payload.ambassadorId = $("#rep").value; const src = $("#src").value; if (src === "pool") { payload.fromPool = true; payload.sourceNodeId = $("#pnode").value; payload.source = "consignment"; } else payload.source = src; }
+    else payload.source = $("#src").value;
+    const r = await call("recordRetailSale")(payload);
+    out.style.color = "#2a7"; out.textContent = `✅ ${money(r.data.total)} revenue · ${money(r.data.commission)} commission · ${r.data.remaining} cans left.`;
+    toast("Retail sale recorded");
   });
 }
 
@@ -729,8 +784,9 @@ async function adminDirectSale(v) {
 }
 
 async function adminOrders(v) {
-  const [orders, ambs] = await Promise.all([allDocs("orders"), allDocs("ambassadors")]);
-  v.innerHTML = `<div class="pagehead"><div><h1>Orders</h1><p>All transaction types in one queue.</p></div></div>
+  const [orders, ambs, nodes, batches] = await Promise.all([allDocs("orders"), allDocs("ambassadors"), allDocs("nodes"), allDocs("batches")]);
+  v.innerHTML = `<div class="pagehead"><div><h1>Orders</h1><p>All transaction types in one queue.</p></div>
+      <button id="retail" class="btn pri">+ Retail / event sale</button></div>
     <div class="card"><table><thead><tr><th>Type</th><th>Pay</th><th>Ambassador</th><th>Batch</th><th>Cans</th><th>Per can</th><th>Total</th><th>Commission</th></tr></thead><tbody>
       ${orders.slice().reverse().map(o => `<tr><td>${typePill(o.type)}</td><td>${o.paymentMethod==="na"?"—":o.paymentMethod}</td>
         <td>${ambName(ambs, o.ambassadorId)}</td><td class="mono">${o.batchId}</td><td class="mono">${num(o.cans)}</td>
@@ -738,6 +794,7 @@ async function adminOrders(v) {
         <td class="mono" style="color:var(--myc-d)">${o.commissionAmount?money(o.commissionAmount):"—"}</td></tr>`).join("")
         || `<tr><td colspan="8" class="sub">No orders yet.</td></tr>`}
     </tbody></table></div>`;
+  $("#retail").onclick = () => openRetailSale({ nodes, ambs, batches, admin: true });
 }
 
 async function adminCashouts(v) {
@@ -819,10 +876,12 @@ async function ambDash(v) {
         <div style="display:flex;justify-content:space-between;margin-top:10px"><span class="pill con">Consignment · earn commission</span><b class="mono" style="font-size:18px">${num(con)}</b></div>
         <div style="display:flex;justify-content:space-between;margin-top:12px"><span class="pill own">Owned · keep retail</span><b class="mono" style="font-size:18px">${num(own)}</b></div></div>
       <div class="card pad"><h3 style="font-size:14px;margin-bottom:10px">Quick actions</h3>
-        <button id="logsamp" class="btn berry" style="width:100%;justify-content:center;margin-bottom:8px">Log samples given out</button>
+        <button id="retail" class="btn berry" style="width:100%;justify-content:center;margin-bottom:8px">Record retail / event sale</button>
+        <button id="logsamp" class="btn" style="width:100%;justify-content:center;margin-bottom:8px">Log samples given out</button>
         <p class="sub">Use “Place order” to sell from consignment (earn commission), or “Buy &amp; convert” to own stock at a discount.</p></div>
     </div>`;
   if ($("#logsamp")) $("#logsamp").onclick = async () => openSampleLogger({ batches: await allDocs("batches"), admin: false });
+  if ($("#retail")) $("#retail").onclick = async () => openRetailSale({ batches: await allDocs("batches"), admin: false });
 }
 
 async function ambOrder(v) {
@@ -935,7 +994,8 @@ async function ambWallet(v) {
 // ---------- small render helpers ----------
 function typePill(t) {
   const map = { consignment_sale: ["con", "Sale"], credit_buy: ["own", "Credit buy"],
-    cash_buy: ["own", "Cash buy"], conversion: ["tr", "Convert"] };
+    cash_buy: ["own", "Cash buy"], conversion: ["tr", "Convert"],
+    retail_sale: ["con", "Retail"], sample: ["tr", "Sample"] };
   const [cls, label] = map[t] || ["tr", t];
   return `<span class="pill ${cls}">${label}</span>`;
 }
