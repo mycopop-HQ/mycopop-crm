@@ -784,12 +784,15 @@ async function adminDirectSale(v) {
 }
 
 async function adminOrders(v) {
-  const [orders, ambs, nodes, batches] = await Promise.all([allDocs("orders"), allDocs("ambassadors"), allDocs("nodes"), allDocs("batches")]);
+  const [orders, ambs, nodes, batches, custs] = await Promise.all([allDocs("orders"), allDocs("ambassadors"), allDocs("nodes"), allDocs("batches"), allDocs("customers")]);
+  const who = (o) => o.customerId ? (custs.find(c => c.id === o.customerId)?.name || o.note || "—") : (o.note || "—");
   v.innerHTML = `<div class="pagehead"><div><h1>Orders</h1><p>All transaction types in one queue.</p></div>
       <button id="retail" class="btn pri">+ Retail / event sale</button></div>
-    <div class="card"><table><thead><tr><th>Type</th><th>Pay</th><th>Ambassador</th><th>Batch</th><th>Cans</th><th>Per can</th><th>Total</th><th>Commission</th></tr></thead><tbody>
-      ${orders.slice().reverse().map(o => `<tr><td>${typePill(o.type)}</td><td>${o.paymentMethod==="na"?"—":o.paymentMethod}</td>
-        <td>${ambName(ambs, o.ambassadorId)}</td><td class="mono">${o.batchId}</td><td class="mono">${num(o.cans)}</td>
+    <div class="card"><table><thead><tr><th>Type</th><th>Ambassador</th><th>Account / detail</th><th>Batch</th><th>Cans</th><th>Per can</th><th>Total</th><th>Commission</th></tr></thead><tbody>
+      ${orders.slice().reverse().map(o => `<tr><td>${typePill(o.type)}</td>
+        <td>${ambName(ambs, o.ambassadorId)}</td>
+        <td>${esc(who(o))}</td>
+        <td class="mono">${esc(o.batchId)}</td><td class="mono">${num(o.cans)}</td>
         <td class="mono">${money(o.perCanPrice)}</td><td class="mono">${money(o.total)}</td>
         <td class="mono" style="color:var(--myc-d)">${o.commissionAmount?money(o.commissionAmount):"—"}</td></tr>`).join("")
         || `<tr><td colspan="8" class="sub">No orders yet.</td></tr>`}
