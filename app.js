@@ -995,7 +995,7 @@ async function ambWallet(v) {
 function typePill(t) {
   const map = { consignment_sale: ["con", "Sale"], credit_buy: ["own", "Credit buy"],
     cash_buy: ["own", "Cash buy"], conversion: ["tr", "Convert"],
-    retail_sale: ["con", "Retail"], sample: ["tr", "Sample"] };
+    retail_sale: ["con", "Retail"], sample: ["tr", "Sample"], wholesale_sale: ["own", "Wholesale"] };
   const [cls, label] = map[t] || ["tr", t];
   return `<span class="pill ${cls}">${label}</span>`;
 }
