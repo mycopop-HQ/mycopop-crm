@@ -194,6 +194,7 @@ function renderApp() {
         <div class="crumb"><b>${role === "admin" ? "Admin" : "Ambassador"}</b> · <span id="crumb"></span></div>
         <div class="spacer"></div>
         <div class="who"><div class="ava">${initials(name)}</div><div><b>${name}</b><small>${sub}</small></div></div>
+        <button id="signout2" class="btn sm" style="margin-left:8px">Sign out</button>
       </div>
       <div class="wrap" id="view"></div>
     </div>
@@ -211,6 +212,7 @@ function renderApp() {
   };
   const exitPreview = () => { S.viewAs = null; S.page = "viewas"; renderApp(); };
   if ($("#signout")) $("#signout").onclick = () => signOut(auth);
+  if ($("#signout2")) $("#signout2").onclick = () => signOut(auth);
   if ($("#changepw")) $("#changepw").onclick = changePasswordForm;
   if ($("#exitview")) $("#exitview").onclick = exitPreview;
   if ($("#exitview2")) $("#exitview2").onclick = exitPreview;
