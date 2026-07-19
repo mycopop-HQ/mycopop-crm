@@ -894,32 +894,42 @@ async function ambOrder(v) {
   const [batches, customers] = await Promise.all([allDocs("batches"), 
     getDocs(query(collection(db, "customers"), where("ambassadorId", "==", actorUid()))).then(s => s.docs.map(d => ({id:d.id,...d.data()})))]);
   const rate = S.amb.tier === 2 ? (S.config?.tier2Rate ?? .2) : (S.config?.tier1Rate ?? .15);
+  const myEmail = S.amb?.email || S.user.email || "";
   v.innerHTML = `<div class="pagehead"><div><h1>Place order</h1><p>Sell consignment stock and earn ${(rate*100).toFixed(0)}% commission.</p></div></div>
     <div class="card pad" style="max-width:520px">
       <label class="f">Customer name</label><input id="cust" class="in" placeholder="e.g. Lowland Cafe" list="custlist">
-      <datalist id="custlist">${customers.map(c=>`<option value="${c.name}">`).join("")}</datalist>
-      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b=>`<option value="${b.id}" data-ws="${b.wholesalePrice}">${b.code} · ${money(b.wholesalePrice)}/can</option>`).join("")}</select>
+      <datalist id="custlist">${customers.map(c=>`<option value="${esc(c.name)}">`).join("")}</datalist>
+      <label class="f">Billing email</label><input id="billemail" class="in" type="email" placeholder="accounts@customer.com">
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b=>`<option value="${b.id}" data-ws="${b.wholesalePrice}" data-sub="${b.ownedPrice ?? b.wholesalePrice}">${esc(b.code)}</option>`).join("")}</select>
+      <label class="f">Price</label><select id="ptype" class="in">
+        <option value="consignment">Consignment</option>
+        <option value="subscriber">Subscriber (discounted)</option></select>
       <label class="f">Cans</label><input id="cans" class="in mono" type="number" value="24">
-      <div style="display:flex;justify-content:space-between;padding:14px 0;border-top:1px solid var(--line);margin-top:14px"><span>Order value</span><b class="mono" id="val">—</b></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px"><input type="checkbox" id="ccamb" checked> Copy me (${esc(myEmail)}) on the billing</label>
+      <div style="display:flex;justify-content:space-between;padding:14px 0;border-top:1px solid var(--line);margin-top:14px"><span>Order value <span class="sub" id="ppc"></span></span><b class="mono" id="val">—</b></div>
       <div style="display:flex;justify-content:space-between;padding-bottom:14px"><span style="color:var(--myc-d)">Your commission (${(rate*100).toFixed(0)}%)</span><b class="mono" id="comm" style="color:var(--myc-d)">—</b></div>
       <button id="submit" class="btn berry" style="width:100%;justify-content:center">Submit order</button>
     </div>`;
+  const unit = () => { const o = $("#batch").selectedOptions[0]; return $("#ptype").value === "subscriber" ? (parseFloat(o?.dataset.sub) || 0) : (parseFloat(o?.dataset.ws) || 0); };
   const recalc = () => {
-    const ws = parseFloat($("#batch").selectedOptions[0]?.dataset.ws) || 0;
-    const cans = parseInt($("#cans").value) || 0;
-    $("#val").textContent = money(ws * cans); $("#comm").textContent = money(ws * cans * rate);
+    const price = unit(), cans = parseInt($("#cans").value) || 0;
+    $("#ppc").textContent = "@ " + money(price) + "/can";
+    $("#val").textContent = money(price * cans); $("#comm").textContent = money(price * cans * rate);
   };
-  $("#batch").onchange = recalc; $("#cans").oninput = recalc; recalc();
+  $("#batch").onchange = recalc; $("#ptype").onchange = recalc; $("#cans").oninput = recalc; recalc();
   $("#submit").onclick = () => safe(async () => {
     if (S.viewAs) return toast("Read-only preview — exit to transact", true);
     let customerId = null;
-    const name = $("#cust").value.trim();
+    const name = $("#cust").value.trim(), billemail = $("#billemail").value.trim();
     if (name) {
       const existing = customers.find(c => c.name.toLowerCase() === name.toLowerCase());
       if (existing) customerId = existing.id;
-      else customerId = (await addDoc(collection(db, "customers"), { name, type: "account", ambassadorId: actorUid() })).id;
+      else customerId = (await addDoc(collection(db, "customers"), { name, type: "account", ambassadorId: actorUid(), billingEmail: billemail })).id;
     }
-    const r = await call("createConsignmentSale")({ batchId: $("#batch").value, cans: parseInt($("#cans").value), customerId });
+    const r = await call("createConsignmentSale")({
+      batchId: $("#batch").value, cans: parseInt($("#cans").value), customerId,
+      priceType: $("#ptype").value, billingEmail: billemail, ccAmbassador: $("#ccamb").checked,
+    });
     toast(`Sold — you earned ${money(r.data.commission)}`); route();
   });
 }
