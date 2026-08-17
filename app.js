@@ -321,7 +321,7 @@ function batchCard(b, spread) {
   const cost = b.costPerCan || 0, ws = b.wholesalePrice || 0;
   const owned = b.ownedPrice ?? ws;
   const credit = b.creditPrice ?? Math.max(0, owned - spread);
-  const comm = ws * 0.175;
+  const comm = Math.max(0, ws - cost) * 0.175; // net: commission on margin (blended ~17.5%)
   return `<div class="card"><div class="ch"><div><h3>${b.code}</h3>
       <span class="sub">${num(b.cansProduced)} cans · best-by ${b.bestBy || "—"}</span></div>
       <button class="btn sm" data-edit="${b.id}">Edit</button></div>
@@ -900,21 +900,23 @@ async function ambOrder(v) {
       <label class="f">Customer name</label><input id="cust" class="in" placeholder="e.g. Lowland Cafe" list="custlist">
       <datalist id="custlist">${customers.map(c=>`<option value="${esc(c.name)}">`).join("")}</datalist>
       <label class="f">Billing email</label><input id="billemail" class="in" type="email" placeholder="accounts@customer.com">
-      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b=>`<option value="${b.id}" data-ws="${b.wholesalePrice}" data-sub="${b.ownedPrice ?? b.wholesalePrice}">${esc(b.code)}</option>`).join("")}</select>
+      <label class="f">Batch</label><select id="batch" class="in">${batches.map(b=>`<option value="${b.id}" data-ws="${b.wholesalePrice}" data-sub="${b.ownedPrice ?? b.wholesalePrice}" data-cost="${b.costPerCan ?? 0}">${esc(b.code)}</option>`).join("")}</select>
       <label class="f">Price</label><select id="ptype" class="in">
         <option value="consignment">Consignment</option>
         <option value="subscriber">Subscriber (discounted)</option></select>
       <label class="f">Cans</label><input id="cans" class="in mono" type="number" value="24">
       <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px"><input type="checkbox" id="ccamb" checked> Copy me (${esc(myEmail)}) on the billing</label>
       <div style="display:flex;justify-content:space-between;padding:14px 0;border-top:1px solid var(--line);margin-top:14px"><span>Order value <span class="sub" id="ppc"></span></span><b class="mono" id="val">—</b></div>
-      <div style="display:flex;justify-content:space-between;padding-bottom:14px"><span style="color:var(--myc-d)">Your commission (${(rate*100).toFixed(0)}%)</span><b class="mono" id="comm" style="color:var(--myc-d)">—</b></div>
+      <div style="display:flex;justify-content:space-between;padding-bottom:14px"><span style="color:var(--myc-d)">Your commission (${(rate*100).toFixed(0)}% of margin)</span><b class="mono" id="comm" style="color:var(--myc-d)">—</b></div>
       <button id="submit" class="btn berry" style="width:100%;justify-content:center">Submit order</button>
     </div>`;
   const unit = () => { const o = $("#batch").selectedOptions[0]; return $("#ptype").value === "subscriber" ? (parseFloat(o?.dataset.sub) || 0) : (parseFloat(o?.dataset.ws) || 0); };
   const recalc = () => {
-    const price = unit(), cans = parseInt($("#cans").value) || 0;
+    const o = $("#batch").selectedOptions[0];
+    const price = unit(), cost = parseFloat(o?.dataset.cost) || 0, cans = parseInt($("#cans").value) || 0;
     $("#ppc").textContent = "@ " + money(price) + "/can";
-    $("#val").textContent = money(price * cans); $("#comm").textContent = money(price * cans * rate);
+    $("#val").textContent = money(price * cans);
+    $("#comm").textContent = money(Math.max(0, price - cost) * cans * rate); // net of cost
   };
   $("#batch").onchange = recalc; $("#ptype").onchange = recalc; $("#cans").oninput = recalc; recalc();
   $("#submit").onclick = () => safe(async () => {
